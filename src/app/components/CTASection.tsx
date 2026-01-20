@@ -29,7 +29,7 @@ const CTASection = ({ onOntdekMeerClick }: CTASectionProps) => {
         }}
       />
 
-      {/* Floating Shapes */}
+      {/* Floating Shapes & Currency Symbols */}
       <motion.div
         className="absolute top-20 left-20 w-32 h-32 border-4 border-white/20 rounded-full"
         animate={{
@@ -43,6 +43,52 @@ const CTASection = ({ onOntdekMeerClick }: CTASectionProps) => {
           ease: "easeInOut",
         }}
       />
+      
+      {/* Currency Symbols Background */}
+      <motion.div
+        className="absolute top-[10%] right-[10%] text-white/10 font-bold text-7xl pointer-events-none select-none"
+        animate={{
+          rotate: [0, -15, 15, 0],
+          scale: [1, 1.2, 0.9, 1],
+        }}
+        transition={{
+          duration: 14,
+          repeat: Infinity,
+          ease: "easeInOut",
+        }}
+      >
+        €
+      </motion.div>
+
+      <motion.div
+        className="absolute bottom-[10%] left-[10%] text-white/10 font-bold text-8xl pointer-events-none select-none"
+        animate={{
+          rotate: [0, 20, -20, 0],
+          scale: [1, 1.3, 0.8, 1],
+        }}
+        transition={{
+          duration: 16,
+          repeat: Infinity,
+          ease: "easeInOut",
+          delay: 1
+        }}
+      >
+        $
+      </motion.div>
+
+      <motion.div
+        className="absolute top-[40%] left-[5%] text-white/5 font-bold text-6xl pointer-events-none select-none"
+        animate={{
+          rotate: [0, 360],
+          scale: [1, 1.4, 1],
+        }}
+        transition={{
+          rotate: { duration: 45, repeat: Infinity, ease: "linear" },
+          scale: { duration: 22, repeat: Infinity, ease: "easeInOut" }
+        }}
+      >
+        $
+      </motion.div>
       <motion.div
         className="absolute bottom-20 right-20 w-24 h-24 bg-white/10 rounded-lg"
         animate={{

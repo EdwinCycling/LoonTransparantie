@@ -50,7 +50,7 @@ const Hero = ({ onOntdekMeerClick }: HeroProps) => {
         }}
       />
 
-      {/* Floating Geometric Shapes */}
+      {/* Floating Geometric Shapes & Currency Symbols */}
       <motion.div
         className="absolute top-1/4 right-1/4 w-20 h-20 border-4 border-white/10"
         animate={{
@@ -62,6 +62,98 @@ const Hero = ({ onOntdekMeerClick }: HeroProps) => {
           y: { duration: 5, repeat: Infinity, ease: "easeInOut" },
         }}
       />
+      
+      {/* Dollar & Euro Symbols Background */}
+      <motion.div
+        className="absolute top-[15%] left-[10%] text-white/10 font-bold text-8xl pointer-events-none select-none"
+        animate={{
+          rotate: [0, 15, -15, 0],
+          scale: [1, 1.2, 0.9, 1],
+        }}
+        transition={{
+          duration: 12,
+          repeat: Infinity,
+          ease: "easeInOut",
+        }}
+      >
+        €
+      </motion.div>
+
+      <motion.div
+        className="absolute top-[25%] right-[15%] text-white/10 font-bold text-9xl pointer-events-none select-none"
+        animate={{
+          rotate: [0, -20, 20, 0],
+          scale: [1, 1.3, 0.8, 1],
+        }}
+        transition={{
+          duration: 15,
+          repeat: Infinity,
+          ease: "easeInOut",
+          delay: 2
+        }}
+      >
+        $
+      </motion.div>
+
+      <motion.div
+        className="absolute bottom-[20%] left-[20%] text-white/10 font-bold text-7xl pointer-events-none select-none"
+        animate={{
+          rotate: [0, 30, -30, 0],
+          scale: [1, 1.1, 0.9, 1],
+        }}
+        transition={{
+          duration: 18,
+          repeat: Infinity,
+          ease: "easeInOut",
+          delay: 1
+        }}
+      >
+        $
+      </motion.div>
+
+      <motion.div
+        className="absolute bottom-[15%] right-[25%] text-white/10 font-bold text-8xl pointer-events-none select-none"
+        animate={{
+          rotate: [0, -10, 10, 0],
+          scale: [1, 1.4, 0.7, 1],
+        }}
+        transition={{
+          duration: 20,
+          repeat: Infinity,
+          ease: "easeInOut",
+          delay: 3
+        }}
+      >
+        €
+      </motion.div>
+
+      <motion.div
+        className="absolute top-[50%] left-[5%] text-white/5 font-bold text-6xl pointer-events-none select-none"
+        animate={{
+          rotate: [0, 360],
+          scale: [1, 1.5, 1],
+        }}
+        transition={{
+          rotate: { duration: 40, repeat: Infinity, ease: "linear" },
+          scale: { duration: 25, repeat: Infinity, ease: "easeInOut" }
+        }}
+      >
+        €
+      </motion.div>
+
+      <motion.div
+        className="absolute top-[40%] right-[5%] text-white/5 font-bold text-5xl pointer-events-none select-none"
+        animate={{
+          rotate: [0, -360],
+          scale: [1, 1.3, 1],
+        }}
+        transition={{
+          rotate: { duration: 35, repeat: Infinity, ease: "linear" },
+          scale: { duration: 20, repeat: Infinity, ease: "easeInOut" }
+        }}
+      >
+        $
+      </motion.div>
       <motion.div
         className="absolute bottom-1/3 right-1/3 w-16 h-16 bg-purple-500/20 rounded-lg"
         animate={{
