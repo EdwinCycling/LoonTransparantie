@@ -1,0 +1,5 @@
+{
+  "name": "Monitor Loontransparantie",
+  "description": "Analyse-applicatie voor de loonkloof tussen mannen en vrouwen conform de Nederlandse implementatie van de EU-richtlijn loontransparantie.",
+  "requestFramePermissions": []
+}
