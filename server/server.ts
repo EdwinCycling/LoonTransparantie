@@ -163,14 +163,15 @@ app.get('/auth/login', (req, res) => {
   const redirectUri = process.env.REDIRECT_URI;
   
   if (!redirectUri) {
-    console.error('[ERROR] REDIRECT_URI is niet ingesteld in .env');
-    return res.status(500).send('Configuratiefout: REDIRECT_URI ontbreekt');
+    console.error('[ERROR] REDIRECT_URI is niet ingesteld in .env of omgevingsvariabelen');
+    return res.status(500).send('Configuratiefout: REDIRECT_URI ontbreekt. Controleer je Render Dashboard Environment Variables.');
   }
 
   const authUrl = `${EXACT_AUTH_URL}?client_id=${process.env.CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&force_login=0`;
   
-  console.log(`[DEBUG] Redirect URI being sent to Exact: ${redirectUri}`);
-  console.log(`[DEBUG] Full Auth URL: ${authUrl}`);
+  console.log(`[DEBUG] Poging tot inloggen bij Exact Online`);
+  console.log(`[DEBUG] Gebruikte Redirect URI: ${redirectUri}`);
+  console.log(`[DEBUG] Zorg dat deze exact hetzelfde is in het Exact Online App Center!`);
   
   res.redirect(authUrl);
 });
