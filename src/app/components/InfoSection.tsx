@@ -29,7 +29,7 @@ const features = [
   },
 ];
 
-function FeatureCard({ feature, index }: { feature: typeof features[0]; index: number }) {
+const FeatureCard: React.FC<{ feature: typeof features[0]; index: number }> = ({ feature, index }) => {
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true, amount: 0.3 });
   const Icon = feature.icon;

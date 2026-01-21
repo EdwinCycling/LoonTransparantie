@@ -1,17 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Printer, RefreshCw, PieChart, Download, Table as TableIcon, X, LogOut } from 'lucide-react';
+import { Printer, RefreshCw, PieChart, Download, Table as TableIcon, X, LogOut, FileText, User, BarChart2, Search } from 'lucide-react';
 import { analyzeData } from '../services/calculationService';
-import { AnalysisReport, Employee } from '../types';
+import { AnalysisReport, Employee, Gender } from '../types';
 import MetricCard from '../components/MetricCard';
 import { QuartileChart, CategoryGapChart } from '../components/Charts';
 import IntroPage from '../components/IntroPage';
 import DivisionSelector from '../components/DivisionSelector';
+import EmployeeReport from '../components/EmployeeReport';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
 interface DashboardProps {
   onAppLogout?: () => void;
 }
+
+type ViewMode = 'dashboard' | 'explanation' | 'employee_check';
 
 const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -23,6 +26,19 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const reportRef = useRef<HTMLDivElement>(null);
+  
+  // New State for View Mode
+  const [viewMode, setViewMode] = useState<ViewMode>('dashboard');
+
+  // New State for Employee Search
+  const [searchId, setSearchId] = useState('');
+  const [searchedEmployee, setSearchedEmployee] = useState<Employee | null>(null);
+  const [employeeAnalysis, setEmployeeAnalysis] = useState<{
+    companyGap: number;
+    levelGap: number;
+    companyAvg: number;
+    levelAvg: number;
+  } | null>(null);
 
   // Check authentication status on mount
   useEffect(() => {
@@ -70,11 +86,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
     } catch (err) {
       console.error('Exact logout failed:', err);
     }
-  };
-
-  const handleLogout = async () => {
-    // Optional: add logout endpoint on backend
-    window.location.href = '/auth/login'; // Redirect to login forces new session
   };
 
   const fetchData = async () => {
@@ -162,6 +173,55 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
     return 'text-green-600';
   };
 
+  // Helper for Mean calculation
+  const calculateMean = (values: number[]): number => {
+    if (values.length === 0) return 0;
+    return values.reduce((a, b) => a + b, 0) / values.length;
+  };
+
+  // Calculate percentage difference: (Reference - Target) / Reference * 100
+  // Positive = Target is lower than Reference
+  // Negative = Target is higher than Reference
+  const calculateGap = (reference: number, target: number): number => {
+      if (reference === 0) return 0;
+      return parseFloat((((reference - target) / reference) * 100).toFixed(2));
+  };
+
+  const handleEmployeeSearch = () => {
+    const emp = employees.find(e => e.id === searchId);
+    if (!emp) {
+        setSearchedEmployee(null);
+        setEmployeeAnalysis(null);
+        alert('Medewerker niet gevonden');
+        return;
+    }
+
+    setSearchedEmployee(emp);
+
+    // 1. Company Average (All employees)
+    const allWages = employees.map(e => e.totalHourlyWage);
+    const companyAvg = calculateMean(allWages);
+    const companyGap = calculateGap(companyAvg, emp.totalHourlyWage);
+
+    // 2. Job Level Average (Same Category)
+    const categoryWages = employees
+        .filter(e => e.jobCategory === emp.jobCategory)
+        .map(e => e.totalHourlyWage);
+    const levelAvg = calculateMean(categoryWages);
+    const levelGap = calculateGap(levelAvg, emp.totalHourlyWage);
+
+    setEmployeeAnalysis({
+        companyGap,
+        levelGap,
+        companyAvg,
+        levelAvg
+    });
+  };
+
+  const formatCurrency = (val: number) => {
+    return new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(val);
+  };
+
   if (isAuthenticated === null) return <div className="flex h-screen items-center justify-center">Authenticatie controleren...</div>;
   
   if (!isAuthenticated) return <IntroPage onLogout={onAppLogout} />;
@@ -193,6 +253,31 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
               </div>
             </div>
             
+            {/* View Switcher Tabs */}
+            <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg mx-4">
+                <button
+                    onClick={() => setViewMode('dashboard')}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md flex items-center ${viewMode === 'dashboard' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                    <BarChart2 className="w-4 h-4 mr-2" />
+                    Dashboard
+                </button>
+                <button
+                    onClick={() => setViewMode('explanation')}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md flex items-center ${viewMode === 'explanation' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                    <FileText className="w-4 h-4 mr-2" />
+                    Uitleg Rapport
+                </button>
+                <button
+                    onClick={() => setViewMode('employee_check')}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md flex items-center ${viewMode === 'employee_check' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                    <User className="w-4 h-4 mr-2" />
+                    Medewerker Check
+                </button>
+            </div>
+
             <div className="flex flex-wrap items-center justify-start md:justify-end gap-2 w-full md:w-auto">
               <button 
                 onClick={() => setHasDivision(false)}
@@ -200,8 +285,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
                 className="flex-1 md:flex-none inline-flex justify-center items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none disabled:opacity-50 whitespace-nowrap"
               >
                 <LogOut className="h-4 w-4 mr-2" />
-                <span className="hidden sm:inline">Wissel Administratie</span>
-                <span className="sm:hidden">Wissel</span>
+                <span className="hidden sm:inline">Wissel</span>
               </button>
 
               <button 
@@ -210,8 +294,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
                 className="flex-1 md:flex-none inline-flex justify-center items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none disabled:opacity-50 whitespace-nowrap"
               >
                 <RefreshCw className={`h-4 w-4 mr-2 ${isGeneratingPDF || loading ? 'animate-spin' : ''}`} />
-                <span className="hidden sm:inline">Ververs Data</span>
-                <span className="sm:hidden">Ververs</span>
+                <span className="hidden sm:inline">Ververs</span>
               </button>
 
               <button 
@@ -220,8 +303,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
                 className="flex-1 md:flex-none inline-flex justify-center items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none disabled:opacity-50 whitespace-nowrap"
               >
                 <TableIcon className="h-4 w-4 mr-2" />
-                <span className="hidden sm:inline">Toon Dataset</span>
-                <span className="sm:hidden">Data</span>
+                <span className="hidden sm:inline">Data</span>
               </button>
               
               <button 
@@ -230,7 +312,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
                 className="flex-1 md:flex-none inline-flex justify-center items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none disabled:opacity-50 whitespace-nowrap"
               >
                 <Printer className="h-4 w-4 mr-2" />
-                <span className="hidden sm:inline">Afdrukken</span>
+                <span className="hidden sm:inline">Print</span>
               </button>
 
               <button 
@@ -243,7 +325,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
                 ) : (
                     <Download className="h-4 w-4 mr-2" />
                 )}
-                {isGeneratingPDF ? 'Genereren...' : 'PDF'}
+                PDF
               </button>
             </div>
           </div>
@@ -318,10 +400,106 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
         </div>
       )}
 
-      {/* Main Content */}
+      {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 print-p-0">
         
-        {/* Printable Area Wrapper */}
+        {/* VIEW: EMPLOYEE CHECK */}
+        {viewMode === 'employee_check' && (
+            <div className="max-w-2xl mx-auto bg-white p-8 rounded-lg shadow-lg">
+                <h2 className="text-2xl font-bold mb-6 flex items-center">
+                    <User className="w-6 h-6 mr-2 text-indigo-600" />
+                    Medewerker Check
+                </h2>
+                
+                <div className="flex gap-4 mb-8">
+                    <div className="relative flex-1">
+                        <input 
+                            type="text" 
+                            placeholder="Voer Medewerker ID in..." 
+                            className="w-full pl-10 pr-4 py-2 border rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                            value={searchId}
+                            onChange={(e) => setSearchId(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleEmployeeSearch()}
+                        />
+                        <Search className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" />
+                    </div>
+                    <button 
+                        onClick={handleEmployeeSearch}
+                        className="px-6 py-2 bg-indigo-600 text-white font-medium rounded-md hover:bg-indigo-700"
+                    >
+                        Analyseer
+                    </button>
+                </div>
+
+                {searchedEmployee && employeeAnalysis && (
+                    <div className={`border-2 rounded-xl p-6 ${searchedEmployee.gender === Gender.Female ? 'border-pink-200 bg-pink-50' : 'border-blue-200 bg-blue-50'}`}>
+                        <div className="flex justify-between items-start mb-6">
+                            <div>
+                                <h3 className={`text-xl font-bold ${searchedEmployee.gender === Gender.Female ? 'text-pink-800' : 'text-blue-800'}`}>
+                                    {searchedEmployee.fullName || `Medewerker ${searchedEmployee.id}`}
+                                </h3>
+                                <p className="text-sm opacity-75">{searchedEmployee.jobCategory}</p>
+                            </div>
+                            <span className={`px-3 py-1 rounded-full text-sm font-bold ${searchedEmployee.gender === Gender.Female ? 'bg-pink-200 text-pink-800' : 'bg-blue-200 text-blue-800'}`}>
+                                {searchedEmployee.gender}
+                            </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-6 mb-6">
+                            <div className="bg-white p-4 rounded-lg shadow-sm">
+                                <p className="text-xs text-gray-500 uppercase">Huidig Uurloon (Totaal)</p>
+                                <p className="text-xl font-bold text-gray-900">{formatCurrency(searchedEmployee.totalHourlyWage)}</p>
+                            </div>
+                            <div className="bg-white p-4 rounded-lg shadow-sm">
+                                <p className="text-xs text-gray-500 uppercase">Variabele Beloning</p>
+                                <p className={`text-xl font-bold ${searchedEmployee.variableHourlyComponent > 0 ? 'text-green-600' : 'text-gray-400'}`}>
+                                    {searchedEmployee.variableHourlyComponent > 0 ? 'Ja' : 'Nee'}
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-indigo-500">
+                                <div className="flex justify-between items-center mb-1">
+                                    <span className="font-medium text-gray-700">Loonkloof (Gehele Bedrijf)</span>
+                                    <span className={`font-bold ${employeeAnalysis.companyGap > 0 ? 'text-red-500' : 'text-green-600'}`}>
+                                        {employeeAnalysis.companyGap > 0 ? '-' : '+'}{Math.abs(employeeAnalysis.companyGap)}%
+                                    </span>
+                                </div>
+                                <p className="text-xs text-gray-500">
+                                    Ten opzichte van het bedrijfs-gemiddelde ({formatCurrency(employeeAnalysis.companyAvg)})
+                                </p>
+                            </div>
+
+                            <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-indigo-500">
+                                <div className="flex justify-between items-center mb-1">
+                                    <span className="font-medium text-gray-700">Loonkloof (Functieniveau)</span>
+                                    <span className={`font-bold ${employeeAnalysis.levelGap > 0 ? 'text-red-500' : 'text-green-600'}`}>
+                                        {employeeAnalysis.levelGap > 0 ? '-' : '+'}{Math.abs(employeeAnalysis.levelGap)}%
+                                    </span>
+                                </div>
+                                <p className="text-xs text-gray-500">
+                                    Ten opzichte van het gemiddelde in categorie '{searchedEmployee.jobCategory}' ({formatCurrency(employeeAnalysis.levelAvg)})
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        )}
+
+        {/* VIEW: EXPLANATION REPORT */}
+        {viewMode === 'explanation' && (
+            <div ref={reportRef} className={`${isGeneratingPDF ? 'p-8 bg-white' : ''}`}>
+                <EmployeeReport report={report} />
+                <div className={`mt-8 text-center text-xs text-gray-400 ${isGeneratingPDF ? 'block' : 'no-print'}`}>
+                    <p>Gegenereerd door Monitor Loontransparantie. Data afkomstig uit Exact Online.</p>
+                </div>
+            </div>
+        )}
+
+        {/* VIEW: DASHBOARD (Original) */}
+        {viewMode === 'dashboard' && (
         <div ref={reportRef} className={`${isGeneratingPDF ? 'p-8 bg-white' : ''}`}>
 
           {/* Report Header */}
@@ -455,6 +633,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
           </div>
 
         </div>
+        )}
       </main>
     </div>
   );

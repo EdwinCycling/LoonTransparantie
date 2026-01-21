@@ -34,7 +34,7 @@ const timelineEvents = [
   },
 ];
 
-function TimelineItem({ event, index }: { event: typeof timelineEvents[0]; index: number }) {
+const TimelineItem: React.FC<{ event: typeof timelineEvents[0]; index: number }> = ({ event, index }) => {
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true, amount: 0.5 });
 

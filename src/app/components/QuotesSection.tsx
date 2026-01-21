@@ -23,7 +23,7 @@ const quotes = [
   },
 ];
 
-function QuoteCard({ quote, index }: { quote: typeof quotes[0]; index: number }) {
+const QuoteCard: React.FC<{ quote: typeof quotes[0]; index: number }> = ({ quote, index }) => {
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true, amount: 0.3 });
 

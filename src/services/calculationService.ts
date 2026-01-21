@@ -35,17 +35,23 @@ export const analyzeData = (employees: Employee[]): AnalysisReport => {
   const womenVariable = women.map(e => e.variableHourlyComponent);
 
   // a) Mean Gap (Total & Base)
+  const meanHourlyWageMen = calculateMean(menTotal);
+  const meanHourlyWageWomen = calculateMean(womenTotal);
   const meanGapBase = calculateGap(calculateMean(menBase), calculateMean(womenBase));
-  const meanGapTotal = calculateGap(calculateMean(menTotal), calculateMean(womenTotal));
+  const meanGapTotal = calculateGap(meanHourlyWageMen, meanHourlyWageWomen);
 
   // b) Mean Gap Variable
   // Filter only those who receive variable pay for the average amount calculation (common interpretation), 
   // OR average across all (PDF implies average over the group). Let's use average over group as per standard algorithms.
-  const meanGapVariable = calculateGap(calculateMean(menVariable), calculateMean(womenVariable));
+  const meanVariableMen = calculateMean(menVariable);
+  const meanVariableWomen = calculateMean(womenVariable);
+  const meanGapVariable = calculateGap(meanVariableMen, meanVariableWomen);
 
   // c) Median Gap
+  const medianHourlyWageMen = calculateMedian(menTotal);
+  const medianHourlyWageWomen = calculateMedian(womenTotal);
   const medianGapBase = calculateGap(calculateMedian(menBase), calculateMedian(womenBase));
-  const medianGapTotal = calculateGap(calculateMedian(menTotal), calculateMedian(womenTotal));
+  const medianGapTotal = calculateGap(medianHourlyWageMen, medianHourlyWageWomen);
 
   // d) Median Gap Variable
   const medianGapVariable = calculateGap(calculateMedian(menVariable), calculateMedian(womenVariable));
@@ -111,9 +117,15 @@ export const analyzeData = (employees: Employee[]): AnalysisReport => {
     femaleCount: women.length,
     meanGapBase,
     meanGapTotal,
+    meanHourlyWageMen,
+    meanHourlyWageWomen,
     meanGapVariable,
+    meanVariableMen,
+    meanVariableWomen,
     medianGapBase,
     medianGapTotal,
+    medianHourlyWageMen,
+    medianHourlyWageWomen,
     medianGapVariable,
     percentReceivingVariableMale,
     percentReceivingVariableFemale,

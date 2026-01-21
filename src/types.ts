@@ -43,13 +43,19 @@ export interface AnalysisReport {
   // a) Loonkloof (Gemiddeld)
   meanGapBase: number;
   meanGapTotal: number;
+  meanHourlyWageMen: number;
+  meanHourlyWageWomen: number;
   
   // b) Loonkloof Variabel (Gemiddeld)
   meanGapVariable: number;
+  meanVariableMen: number;
+  meanVariableWomen: number;
   
   // c) Mediane Loonkloof
   medianGapBase: number;
   medianGapTotal: number;
+  medianHourlyWageMen: number;
+  medianHourlyWageWomen: number;
   
   // d) Mediane Loonkloof Variabel
   medianGapVariable: number;
