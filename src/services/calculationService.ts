@@ -1,13 +1,13 @@
 import { Employee, AnalysisReport, Gender, QuartileData, CategoryGap } from '../types';
 
 // Helper: Calculate Mean
-const calculateMean = (values: number[]): number => {
+export const calculateMean = (values: number[]): number => {
   if (values.length === 0) return 0;
   return values.reduce((a, b) => a + b, 0) / values.length;
 };
 
 // Helper: Calculate Median
-const calculateMedian = (values: number[]): number => {
+export const calculateMedian = (values: number[]): number => {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
@@ -15,7 +15,7 @@ const calculateMedian = (values: number[]): number => {
 };
 
 // Helper: Pay Gap Formula: (Men - Women) / Men * 100
-const calculateGap = (valMen: number, valWomen: number): number => {
+export const calculateGap = (valMen: number, valWomen: number): number => {
   if (valMen === 0) return 0;
   return parseFloat((((valMen - valWomen) / valMen) * 100).toFixed(2));
 };
@@ -65,12 +65,13 @@ export const analyzeData = (employees: Employee[]): AnalysisReport => {
 
   // f) Quartiles
   const sortedByTotal = [...employees].sort((a, b) => a.totalHourlyWage - b.totalHourlyWage);
-  const quartileSize = Math.ceil(sortedByTotal.length / 4);
+  const totalCount = sortedByTotal.length;
   const quartiles: QuartileData[] = [];
 
   for (let i = 0; i < 4; i++) {
-    const start = i * quartileSize;
-    const chunk = sortedByTotal.slice(start, start + quartileSize);
+    const start = Math.floor(i * totalCount / 4);
+    const end = Math.floor((i + 1) * totalCount / 4);
+    const chunk = sortedByTotal.slice(start, end);
     
     const chunkMen = chunk.filter(e => e.gender === Gender.Male).length;
     const chunkWomen = chunk.filter(e => e.gender === Gender.Female).length;
@@ -80,8 +81,8 @@ export const analyzeData = (employees: Employee[]): AnalysisReport => {
       quartile: `Q${i + 1}`,
       maleCount: chunkMen,
       femaleCount: chunkWomen,
-      malePercentage: parseFloat(((chunkMen / totalChunk) * 100).toFixed(1)),
-      femalePercentage: parseFloat(((chunkWomen / totalChunk) * 100).toFixed(1))
+      malePercentage: totalChunk > 0 ? parseFloat(((chunkMen / totalChunk) * 100).toFixed(1)) : 0,
+      femalePercentage: totalChunk > 0 ? parseFloat(((chunkWomen / totalChunk) * 100).toFixed(1)) : 0
     });
   }
 

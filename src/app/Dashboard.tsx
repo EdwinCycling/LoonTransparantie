@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Printer, RefreshCw, PieChart, Download, Table as TableIcon, X, LogOut, FileText, User, BarChart2, Search } from 'lucide-react';
-import { analyzeData } from '../services/calculationService';
+import { analyzeData, calculateMean, calculateGap } from '../services/calculationService';
 import { AnalysisReport, Employee, Gender } from '../types';
 import MetricCard from '../components/MetricCard';
 import { QuartileChart, CategoryGapChart } from '../components/Charts';
@@ -21,7 +21,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
   const [report, setReport] = useState<AnalysisReport | null>(null);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   const [showDataset, setShowDataset] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null); // App Auth
+  const [isExactAuthenticated, setIsExactAuthenticated] = useState<boolean>(false); // Exact OAuth
   const [hasDivision, setHasDivision] = useState<boolean>(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,7 +32,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
   const [viewMode, setViewMode] = useState<ViewMode>('dashboard');
 
   // New State for Employee Search
-  const [searchId, setSearchId] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<Employee[]>([]);
   const [searchedEmployee, setSearchedEmployee] = useState<Employee | null>(null);
   const [employeeAnalysis, setEmployeeAnalysis] = useState<{
     companyGap: number;
@@ -40,163 +42,139 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
     levelAvg: number;
   } | null>(null);
 
-  // Check authentication status on mount
+  // Authentication check and initial data fetch
   useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const response = await fetch('/api/status', {
+          headers: { 'ngrok-skip-browser-warning': 'true' }
+        });
+        const data = await response.json();
+        
+        setIsAuthenticated(data.isAppAuthorized);
+        setIsExactAuthenticated(data.isAuthenticated); // renamed to avoid confusion
+        setHasDivision(data.hasDivision);
+        
+        if (data.isAppAuthorized && data.isAuthenticated && data.hasDivision) {
+          fetchData();
+        }
+      } catch (err) {
+        console.error('Auth check failed:', err);
+        setIsAuthenticated(false);
+      }
+    };
     checkAuth();
   }, []);
 
-  const checkAuth = async () => {
+  const fetchData = async () => {
+    setLoading(true);
+    setError(null);
     try {
-      const res = await fetch('/api/status', {
-        headers: {
-          'ngrok-skip-browser-warning': 'true'
-        }
+      const response = await fetch('/api/employees', {
+        headers: { 'ngrok-skip-browser-warning': 'true' }
       });
-      
-      if (res.status === 401) {
-        setIsAuthenticated(false);
-        setHasDivision(false);
-        return;
+      if (!response.ok) {
+        if (response.status === 401) {
+          setIsExactAuthenticated(false);
+          return;
+        }
+        throw new Error('Kon geen gegevens ophalen van de server');
       }
-
-      const data = await res.json();
-      setIsAuthenticated(data.isAuthenticated);
-      setHasDivision(data.hasDivision);
       
-      if (data.isAuthenticated && data.hasDivision) {
-        fetchData();
+      const data: Employee[] = await response.json();
+      setEmployees(data);
+      
+      if (data.length > 0) {
+        const analysis = analyzeData(data);
+        setReport(analysis);
       }
-    } catch (err) {
-      console.error("Auth check failed", err);
-      setIsAuthenticated(false);
-      setHasDivision(false);
+    } catch (err: any) {
+      setError(err.message || 'Er is een onbekende fout opgetreden');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleDivisionSelected = (divisionCode: number) => {
+  const handleDivisionSelected = () => {
     setHasDivision(true);
     fetchData();
   };
 
   const handleExactLogout = async () => {
     try {
-      await fetch('/api/exact-logout', { method: 'POST' });
-      setIsAuthenticated(false);
+      await fetch('/api/exact-logout', { 
+        method: 'POST',
+        headers: { 'ngrok-skip-browser-warning': 'true' }
+      });
+      setIsExactAuthenticated(false);
       setHasDivision(false);
+      setEmployees([]);
+      setReport(null);
     } catch (err) {
       console.error('Exact logout failed:', err);
     }
   };
 
-  const fetchData = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch('/api/employees', {
-        headers: {
-          'ngrok-skip-browser-warning': 'true'
-        }
-      });
-      
-      if (res.status === 401) {
-        setIsAuthenticated(false);
-        setHasDivision(false);
-        return;
-      }
-      
-      if (!res.ok) throw new Error('Kon data niet ophalen');
-      
-      const data: Employee[] = await res.json();
-      setEmployees(data);
-      setReport(analyzeData(data));
-    } catch (err) {
-      console.error(err);
-      setError('Er is een fout opgetreden bij het ophalen van de Exact Online data.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDownloadPDF = async () => {
-    if (!reportRef.current) return;
-    
-    setIsGeneratingPDF(true);
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    try {
-      const element = reportRef.current;
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-        ignoreElements: (element) => element.classList.contains('no-print')
-      });
-
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      
-      const imgWidth = pdfWidth;
-      const imgHeight = (canvas.height * pdfWidth) / canvas.width;
-      
-      let heightLeft = imgHeight;
-      let position = 0;
-
-      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pdfHeight;
-
-      while (heightLeft >= 0) {
-        position -= pdfHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pdfHeight;
-      }
-
-      pdf.save('Rapportage-Loontransparantie.pdf');
-    } catch (error) {
-      console.error('Fout bij genereren PDF:', error);
-      alert('Er is een fout opgetreden bij het maken van de PDF.');
-    } finally {
-      setIsGeneratingPDF(false);
-    }
+  const handleExactLogin = () => {
+    window.location.href = '/auth/login';
   };
 
   const handlePrint = () => {
     window.print();
   };
 
-  const getGapColor = (gap: number) => {
-    if (gap > 5 || gap < -5) return 'text-red-600';
-    return 'text-green-600';
-  };
-
-  // Helper for Mean calculation
-  const calculateMean = (values: number[]): number => {
-    if (values.length === 0) return 0;
-    return values.reduce((a, b) => a + b, 0) / values.length;
-  };
-
-  // Calculate percentage difference: (Reference - Target) / Reference * 100
-  // Positive = Target is lower than Reference
-  // Negative = Target is higher than Reference
-  const calculateGap = (reference: number, target: number): number => {
-      if (reference === 0) return 0;
-      return parseFloat((((reference - target) / reference) * 100).toFixed(2));
-  };
-
-  const handleEmployeeSearch = () => {
-    const emp = employees.find(e => e.id === searchId);
-    if (!emp) {
-        setSearchedEmployee(null);
-        setEmployeeAnalysis(null);
-        alert('Medewerker niet gevonden');
-        return;
+  const handleDownloadPDF = async () => {
+    if (!reportRef.current) return;
+    
+    setIsGeneratingPDF(true);
+    try {
+      const element = reportRef.current;
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        windowWidth: 1200
+      });
+      
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgProps = pdf.getImageProperties(imgData);
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      pdf.save(`Loontransparantie_Rapport_${new Date().toISOString().split('T')[0]}.pdf`);
+    } catch (err) {
+      console.error('PDF generation failed:', err);
+      alert('Fout bij het genereren van de PDF');
+    } finally {
+      setIsGeneratingPDF(false);
     }
+  };
 
+  const getGapColor = (gap: number | null) => {
+    if (gap === null) return 'text-gray-400';
+    return Math.abs(gap) > 5 ? 'text-red-600' : 'text-green-600';
+  };
+
+  // Real-time search effect
+  useEffect(() => {
+    if (searchQuery.trim().length > 0) {
+      const query = searchQuery.toLowerCase();
+      const filtered = employees.filter(e => 
+        e.id.toLowerCase().includes(query) || 
+        (e.fullName && e.fullName.toLowerCase().includes(query))
+      );
+      setSearchResults(filtered.slice(0, 5)); // Toon max 5 resultaten in de dropdown
+    } else {
+      setSearchResults([]);
+    }
+  }, [searchQuery, employees]);
+
+  const selectEmployee = (emp: Employee) => {
     setSearchedEmployee(emp);
+    setSearchQuery(emp.fullName || emp.id);
+    setSearchResults([]);
 
     // 1. Company Average (All employees)
     const allWages = employees.map(e => e.totalHourlyWage);
@@ -224,10 +202,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
 
   if (isAuthenticated === null) return <div className="flex h-screen items-center justify-center">Authenticatie controleren...</div>;
   
-  if (!isAuthenticated) return <IntroPage onLogout={onAppLogout} />;
+  // Stap 1: Als de gebruiker niet is ingelogd in de applicatie (zou afgehandeld moeten zijn door App.tsx)
+  if (!isAuthenticated) return <div className="flex h-screen items-center justify-center">Geen toegang tot de applicatie. Log opnieuw in.</div>;
 
+  // Stap 2: Als de gebruiker wel in de app is, maar nog niet gekoppeld met Exact Online
+  if (!isExactAuthenticated) return <IntroPage onLogout={onAppLogout} />;
+
+  // Stap 3: Als de gebruiker is gekoppeld, maar nog geen administratie heeft gekozen
   if (!hasDivision) return <DivisionSelector onDivisionSelected={handleDivisionSelected} onExactLogout={handleExactLogout} />;
 
+  // Stap 4: Data laden
   if (loading && !report) return <div className="flex h-screen items-center justify-center">Data ophalen uit Exact Online...</div>;
 
   if (error) return (
@@ -279,6 +263,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
             </div>
 
             <div className="flex flex-wrap items-center justify-start md:justify-end gap-2 w-full md:w-auto">
+              <button 
+                onClick={onAppLogout}
+                disabled={isGeneratingPDF}
+                className="flex-1 md:flex-none inline-flex justify-center items-center px-3 py-2 border border-red-300 shadow-sm text-sm font-medium rounded-md text-red-700 bg-white hover:bg-red-50 focus:outline-none disabled:opacity-50 whitespace-nowrap"
+              >
+                <LogOut className="h-4 w-4 mr-2" />
+                <span className="hidden sm:inline">Uitloggen</span>
+              </button>
+
               <button 
                 onClick={() => setHasDivision(false)}
                 disabled={isGeneratingPDF || loading}
@@ -411,24 +404,40 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
                     Medewerker Check
                 </h2>
                 
-                <div className="flex gap-4 mb-8">
-                    <div className="relative flex-1">
-                        <input 
-                            type="text" 
-                            placeholder="Voer Medewerker ID in..." 
-                            className="w-full pl-10 pr-4 py-2 border rounded-md focus:ring-indigo-500 focus:border-indigo-500"
-                            value={searchId}
-                            onChange={(e) => setSearchId(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleEmployeeSearch()}
-                        />
-                        <Search className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" />
+                <div className="relative mb-8">
+                    <div className="flex gap-4">
+                        <div className="relative flex-1">
+                            <input 
+                                type="text" 
+                                placeholder="Zoek op naam of ID..." 
+                                className="w-full pl-10 pr-4 py-2 border rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                            />
+                            <Search className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" />
+                        </div>
                     </div>
-                    <button 
-                        onClick={handleEmployeeSearch}
-                        className="px-6 py-2 bg-indigo-600 text-white font-medium rounded-md hover:bg-indigo-700"
-                    >
-                        Analyseer
-                    </button>
+
+                    {/* Search Results Dropdown */}
+                    {searchResults.length > 0 && (
+                        <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto">
+                            {searchResults.map((emp) => (
+                                <button
+                                    key={emp.id}
+                                    onClick={() => selectEmployee(emp)}
+                                    className="w-full text-left px-4 py-3 hover:bg-indigo-50 flex items-center justify-between border-b border-gray-50 last:border-0"
+                                >
+                                    <div>
+                                        <div className="font-medium text-gray-900">{emp.fullName || emp.id}</div>
+                                        <div className="text-xs text-gray-500">{emp.jobCategory} • {emp.id}</div>
+                                    </div>
+                                    <span className={`text-xs px-2 py-1 rounded-full ${emp.gender === Gender.Male ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'}`}>
+                                        {emp.gender}
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 {searchedEmployee && employeeAnalysis && (
