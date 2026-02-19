@@ -541,39 +541,90 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
           <h2 className="text-xl font-bold text-gray-900 mb-6 border-b pb-2">Rapportage Onderdelen</h2>
 
           {/* A t/m D Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 print-break-inside">
-            {/* a */}
-            <MetricCard 
-              title="a) Loonkloof (Gemiddeld)" 
-              value={`${report.meanGapTotal}%`} 
-              description="Verschil in gemiddeld totaal uurloon."
-              valueClassName={getGapColor(report.meanGapTotal)}
-              formula="(Gem. Loon Mannen - Gem. Loon Vrouwen) / Gem. Loon Mannen * 100"
-            />
-            {/* b */}
-            <MetricCard 
-              title="b) Kloof Variabel (Gemiddeld)" 
-              value={`${report.meanGapVariable}%`} 
-              description="Verschil in gemiddelde variabele componenten."
-              valueClassName={getGapColor(report.meanGapVariable)}
-              formula="(Gem. Variabel Mannen - Gem. Variabel Vrouwen) / Gem. Variabel Mannen * 100"
-            />
-            {/* c */}
-            <MetricCard 
-              title="c) Loonkloof (Mediaan)" 
-              value={`${report.medianGapTotal}%`} 
-              description="Verschil in mediaan totaal uurloon."
-              valueClassName={getGapColor(report.medianGapTotal)}
-              formula="(Mediaan Loon Mannen - Mediaan Loon Vrouwen) / Mediaan Loon Mannen * 100"
-            />
-            {/* d */}
-            <MetricCard 
-               title="d) Kloof Variabel (Mediaan)" 
-               value={`${report.medianGapVariable}%`} 
-               description="Verschil in mediane variabele componenten."
-               valueClassName={getGapColor(report.medianGapVariable)}
-               formula="(Mediaan Variabel Mannen - Mediaan Variabel Vrouwen) / Mediaan Variabel Mannen * 100"
-            />
+          <div className="space-y-6 mb-8 print-break-inside">
+            {/* A */}
+            <div>
+                <h3 className="text-md font-semibold text-gray-800 mb-2">Groep A: Gemiddelde Loonkloof</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <MetricCard 
+                        title="a.1) Loonkloof (Jaarloon)" 
+                        value={`${report.meanGapAnnualTotal}%`} 
+                        description="Verschil in gemiddeld bruto jaarloon."
+                        valueClassName={getGapColor(report.meanGapAnnualTotal)}
+                        formula="(Gem. Jaarloon M - Gem. Jaarloon V) / Gem. Jaarloon M * 100"
+                    />
+                    <MetricCard 
+                        title="a.2) Loonkloof (Uurloon)" 
+                        value={`${report.meanGapTotal}%`} 
+                        description="Verschil in gemiddeld totaal uurloon."
+                        valueClassName={getGapColor(report.meanGapTotal)}
+                        formula="(Gem. Uurloon M - Gem. Uurloon V) / Gem. Uurloon M * 100"
+                    />
+                </div>
+            </div>
+
+            {/* B */}
+            <div>
+                <h3 className="text-md font-semibold text-gray-800 mb-2">Groep B: Kloof Variabel (Gemiddeld)</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                     <MetricCard 
+                      title="b.1) Kloof Variabel (Jaarloon)" 
+                      value={`${report.meanGapAnnualVariable}%`} 
+                      description="Verschil in gemiddelde jaarlijkse variabele componenten."
+                      valueClassName={getGapColor(report.meanGapAnnualVariable)}
+                      formula="(Gem. Jaar Variabel M - Gem. Jaar Variabel V) / Gem. Jaar Variabel M * 100"
+                    />
+                    <MetricCard 
+                      title="b.2) Kloof Variabel (Uurloon)" 
+                      value={`${report.meanGapVariable}%`} 
+                      description="Verschil in gemiddelde variabele componenten per uur."
+                      valueClassName={getGapColor(report.meanGapVariable)}
+                      formula="(Gem. Uur Variabel M - Gem. Uur Variabel V) / Gem. Uur Variabel M * 100"
+                    />
+                </div>
+            </div>
+            
+            {/* C */}
+            <div>
+                <h3 className="text-md font-semibold text-gray-800 mb-2">Groep C: Loonkloof (Mediaan)</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <MetricCard 
+                      title="c.1) Loonkloof (Jaarloon)" 
+                      value={`${report.medianGapAnnualTotal}%`} 
+                      description="Verschil in mediaan bruto jaarloon."
+                      valueClassName={getGapColor(report.medianGapAnnualTotal)}
+                      formula="(Mediaan Jaarloon M - Mediaan Jaarloon V) / Mediaan Jaarloon M * 100"
+                    />
+                    <MetricCard 
+                      title="c.2) Loonkloof (Uurloon)" 
+                      value={`${report.medianGapTotal}%`} 
+                      description="Verschil in mediaan totaal uurloon."
+                      valueClassName={getGapColor(report.medianGapTotal)}
+                      formula="(Mediaan Uurloon M - Mediaan Uurloon V) / Mediaan Uurloon M * 100"
+                    />
+                </div>
+            </div>
+
+            {/* D */}
+            <div>
+                <h3 className="text-md font-semibold text-gray-800 mb-2">Groep D: Kloof Variabel (Mediaan)</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <MetricCard 
+                       title="d.1) Kloof Variabel (Jaarloon)" 
+                       value={`${report.medianGapAnnualVariable}%`} 
+                       description="Verschil in mediane jaarlijkse variabele componenten."
+                       valueClassName={getGapColor(report.medianGapAnnualVariable)}
+                       formula="(Mediaan Jaar Variabel M - Mediaan Jaar Variabel V) / Mediaan Jaar Variabel M * 100"
+                    />
+                    <MetricCard 
+                       title="d.2) Kloof Variabel (Uurloon)" 
+                       value={`${report.medianGapVariable}%`} 
+                       description="Verschil in mediane variabele componenten per uur."
+                       valueClassName={getGapColor(report.medianGapVariable)}
+                       formula="(Mediaan Uur Variabel M - Mediaan Uur Variabel V) / Mediaan Uur Variabel M * 100"
+                    />
+                </div>
+            </div>
           </div>
 
           {/* E */}
@@ -612,9 +663,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
                   <thead className="bg-gray-50">
                     <tr>
                       <th scope="col" className="px-4 py-2 text-left font-medium text-gray-500 uppercase">Categorie</th>
-                      <th scope="col" className="px-4 py-2 text-right font-medium text-gray-500 uppercase">Kloof Basisloon</th>
-                      <th scope="col" className="px-4 py-2 text-right font-medium text-gray-500 uppercase">Kloof Variabel</th>
-                      <th scope="col" className="px-4 py-2 text-right font-medium text-gray-500 uppercase">Kloof Totaal</th>
+                      <th scope="col" className="px-4 py-2 text-right font-medium text-gray-500 uppercase">Kloof Basis (Uur)</th>
+                      <th scope="col" className="px-4 py-2 text-right font-medium text-gray-500 uppercase">Kloof Variabel (Uur)</th>
+                      <th scope="col" className="px-4 py-2 text-right font-medium text-gray-500 uppercase">Kloof Totaal (Uur)</th>
+                      <th scope="col" className="px-4 py-2 text-right font-medium text-gray-500 uppercase">Kloof Totaal (Jaar)</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
@@ -629,6 +681,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
                         </td>
                         <td className={`px-4 py-3 whitespace-nowrap text-right font-bold ${cat.meanGapTotal === null ? 'text-gray-400' : getGapColor(cat.meanGapTotal)}`}>
                            {cat.meanGapTotal === null ? 'N/v' : `${cat.meanGapTotal}%`}
+                        </td>
+                        <td className={`px-4 py-3 whitespace-nowrap text-right font-bold ${cat.meanGapAnnualTotal === null ? 'text-gray-400' : getGapColor(cat.meanGapAnnualTotal)}`}>
+                           {cat.meanGapAnnualTotal === null ? 'N/v' : `${cat.meanGapAnnualTotal}%`}
                         </td>
                       </tr>
                     ))}

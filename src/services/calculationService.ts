@@ -34,11 +34,22 @@ export const analyzeData = (employees: Employee[]): AnalysisReport => {
   const menVariable = men.map(e => e.variableHourlyComponent);
   const womenVariable = women.map(e => e.variableHourlyComponent);
 
+  // Annual Values
+  const menAnnual = men.map(e => e.grossAnnualWage);
+  const womenAnnual = women.map(e => e.grossAnnualWage);
+  const menAnnualVariable = men.map(e => e.variableHourlyComponent * e.annualHours);
+  const womenAnnualVariable = women.map(e => e.variableHourlyComponent * e.annualHours);
+
   // a) Mean Gap (Total & Base)
   const meanHourlyWageMen = calculateMean(menTotal);
   const meanHourlyWageWomen = calculateMean(womenTotal);
   const meanGapBase = calculateGap(calculateMean(menBase), calculateMean(womenBase));
   const meanGapTotal = calculateGap(meanHourlyWageMen, meanHourlyWageWomen);
+
+  // Annual Mean Gap
+  const meanAnnualWageMen = calculateMean(menAnnual);
+  const meanAnnualWageWomen = calculateMean(womenAnnual);
+  const meanGapAnnualTotal = calculateGap(meanAnnualWageMen, meanAnnualWageWomen);
 
   // b) Mean Gap Variable
   // Filter only those who receive variable pay for the average amount calculation (common interpretation), 
@@ -47,14 +58,27 @@ export const analyzeData = (employees: Employee[]): AnalysisReport => {
   const meanVariableWomen = calculateMean(womenVariable);
   const meanGapVariable = calculateGap(meanVariableMen, meanVariableWomen);
 
+  // Annual Variable Gap
+  const meanAnnualVariableMen = calculateMean(menAnnualVariable);
+  const meanAnnualVariableWomen = calculateMean(womenAnnualVariable);
+  const meanGapAnnualVariable = calculateGap(meanAnnualVariableMen, meanAnnualVariableWomen);
+
   // c) Median Gap
   const medianHourlyWageMen = calculateMedian(menTotal);
   const medianHourlyWageWomen = calculateMedian(womenTotal);
   const medianGapBase = calculateGap(calculateMedian(menBase), calculateMedian(womenBase));
   const medianGapTotal = calculateGap(medianHourlyWageMen, medianHourlyWageWomen);
 
+  // Annual Median Gap
+  const medianAnnualWageMen = calculateMedian(menAnnual);
+  const medianAnnualWageWomen = calculateMedian(womenAnnual);
+  const medianGapAnnualTotal = calculateGap(medianAnnualWageMen, medianAnnualWageWomen);
+
   // d) Median Gap Variable
   const medianGapVariable = calculateGap(calculateMedian(menVariable), calculateMedian(womenVariable));
+  
+  // Annual Median Gap Variable
+  const medianGapAnnualVariable = calculateGap(calculateMedian(menAnnualVariable), calculateMedian(womenAnnualVariable));
 
   // e) Share receiving variable components
   const menReceivingVar = men.filter(e => e.variableHourlyComponent > 0).length;
@@ -100,6 +124,10 @@ export const analyzeData = (employees: Employee[]): AnalysisReport => {
             meanGapBase: calculateGap(calculateMean(catMen.map(e => e.baseHourlyWage)), calculateMean(catWomen.map(e => e.baseHourlyWage))),
             meanGapTotal: calculateGap(calculateMean(catMen.map(e => e.totalHourlyWage)), calculateMean(catWomen.map(e => e.totalHourlyWage))),
             meanGapVariable: calculateGap(calculateMean(catMen.map(e => e.variableHourlyComponent)), calculateMean(catWomen.map(e => e.variableHourlyComponent))),
+            
+            // Annual Gaps for Category
+            meanGapAnnualTotal: calculateGap(calculateMean(catMen.map(e => e.grossAnnualWage)), calculateMean(catWomen.map(e => e.grossAnnualWage))),
+            meanGapAnnualVariable: calculateGap(calculateMean(catMen.map(e => e.variableHourlyComponent * e.annualHours)), calculateMean(catWomen.map(e => e.variableHourlyComponent * e.annualHours))),
         });
     } else if (catMen.length > 0 || catWomen.length > 0) {
         // No mix: return null instead of 0% to indicate "Not Applicable"
@@ -107,7 +135,9 @@ export const analyzeData = (employees: Employee[]): AnalysisReport => {
             category: cat,
             meanGapBase: null,
             meanGapTotal: null,
-            meanGapVariable: null
+            meanGapVariable: null,
+            meanGapAnnualTotal: null,
+            meanGapAnnualVariable: null,
         });
     }
   });
@@ -118,16 +148,26 @@ export const analyzeData = (employees: Employee[]): AnalysisReport => {
     femaleCount: women.length,
     meanGapBase,
     meanGapTotal,
+    meanGapAnnualTotal,
     meanHourlyWageMen,
     meanHourlyWageWomen,
+    meanAnnualWageMen,
+    meanAnnualWageWomen,
     meanGapVariable,
+    meanGapAnnualVariable,
     meanVariableMen,
     meanVariableWomen,
+    meanAnnualVariableMen,
+    meanAnnualVariableWomen,
     medianGapBase,
     medianGapTotal,
+    medianGapAnnualTotal,
     medianHourlyWageMen,
     medianHourlyWageWomen,
+    medianAnnualWageMen,
+    medianAnnualWageWomen,
     medianGapVariable,
+    medianGapAnnualVariable,
     percentReceivingVariableMale,
     percentReceivingVariableFemale,
     quartiles,

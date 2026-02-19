@@ -33,6 +33,10 @@ export interface CategoryGap {
   meanGapTotal: number | null;
   meanGapBase: number | null;
   meanGapVariable: number | null;
+  
+  // New fields for Annual
+  meanGapAnnualTotal: number | null;
+  meanGapAnnualVariable: number | null;
 }
 
 export interface AnalysisReport {
@@ -42,23 +46,33 @@ export interface AnalysisReport {
   
   // a) Loonkloof (Gemiddeld)
   meanGapBase: number;
-  meanGapTotal: number;
+  meanGapTotal: number; // Hourly
+  meanGapAnnualTotal: number; // Annual
   meanHourlyWageMen: number;
   meanHourlyWageWomen: number;
+  meanAnnualWageMen: number;
+  meanAnnualWageWomen: number;
   
   // b) Loonkloof Variabel (Gemiddeld)
-  meanGapVariable: number;
+  meanGapVariable: number; // Hourly
+  meanGapAnnualVariable: number; // Annual
   meanVariableMen: number;
   meanVariableWomen: number;
+  meanAnnualVariableMen: number;
+  meanAnnualVariableWomen: number;
   
   // c) Mediane Loonkloof
   medianGapBase: number;
-  medianGapTotal: number;
+  medianGapTotal: number; // Hourly
+  medianGapAnnualTotal: number; // Annual
   medianHourlyWageMen: number;
   medianHourlyWageWomen: number;
+  medianAnnualWageMen: number;
+  medianAnnualWageWomen: number;
   
   // d) Mediane Loonkloof Variabel
-  medianGapVariable: number;
+  medianGapVariable: number; // Hourly
+  medianGapAnnualVariable: number; // Annual
   
   // e) Aandeel ontvangende componenten
   percentReceivingVariableMale: number;

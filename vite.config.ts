@@ -15,15 +15,15 @@ export default defineConfig(({ mode }) => {
       ],
       proxy: {
         '/api': {
-          target: 'http://localhost:3001',
+          target: 'http://localhost:3020',
           changeOrigin: true,
         },
         '/auth': {
-          target: 'http://localhost:3001',
+          target: 'http://localhost:3020',
           changeOrigin: true,
         },
         '/callback': {
-          target: 'http://localhost:3001',
+          target: 'http://localhost:3020',
           changeOrigin: true,
         },
       }
