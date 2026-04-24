@@ -45,4 +45,7 @@ export interface ExactEmploymentOrganization {
   JobTitle: string;
   JobTitleCode: string;
   JobTitleDescription: string;
+  Department?: string;
+  DepartmentCode?: string;
+  DepartmentDescription?: string;
 }

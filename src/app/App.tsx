@@ -22,7 +22,7 @@ export default function App() {
 
   const handleAppLogout = async () => {
     try {
-      await fetch('/api/app-logout', { method: 'POST' });
+      await fetch('/api/app-logout', { method: 'POST', credentials: 'include' });
       setIsAuthorized(false);
     } catch (err) {
       console.error('Logout failed:', err);
@@ -33,7 +33,7 @@ export default function App() {
 
   useEffect(() => {
     // Check status bij opstarten
-    fetch('/api/status')
+    fetch('/api/status', { credentials: 'include' })
       .then(res => res.json())
       .then(data => {
         if (data.isAppAuthorized) {
@@ -72,6 +72,7 @@ export default function App() {
       const response = await fetch('/api/app-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ username, password })
       });
 

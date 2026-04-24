@@ -1,6 +1,7 @@
 export enum Gender {
   Male = 'Man',
-  Female = 'Vrouw'
+  Female = 'Vrouw',
+  Other = 'X'
 }
 
 export interface Employee {
@@ -9,6 +10,7 @@ export interface Employee {
   gender: Gender;
   age: number;
   jobCategory: string;
+  department?: string;
   // All monetary values in Euro
   baseHourlyWage: number; 
   variableHourlyComponent: number; // Bonus, toeslagen, etc per uur
@@ -16,7 +18,7 @@ export interface Employee {
   
   // Nieuwe velden
   fte: number; // Arbeidsjaareenheid (0.0 - 1.0)
-  annualHours: number; // Aantal uren op jaarbasis (38-urige werkweek * FTE)
+  annualHours: number; // Aantal uren op jaarbasis (38-urige werkweek * AJE)
   grossAnnualWage: number; // Bruto jaarloon inclusief variabel
 }
 
@@ -39,12 +41,27 @@ export interface CategoryGap {
   meanGapAnnualVariable: number | null;
 }
 
+export interface DepartmentGenderBreakdown {
+  department: string;
+  totalEmployees: number;
+  maleCount: number;
+  femaleCount: number;
+  otherCount: number;
+  binaryCount: number;
+  malePercentage: number;
+  femalePercentage: number;
+  otherPercentage: number;
+  binaryPercentage: number;
+}
+
 export interface AnalysisReport {
   totalEmployees: number;
   maleCount: number;
   femaleCount: number;
+  otherCount: number;
+  binaryCount: number;
   
-  // a) Loonkloof (Gemiddeld)
+  // a) LOONVERSCHILLEN MAN/VROUW (Gemiddeld)
   meanGapBase: number;
   meanGapTotal: number; // Hourly
   meanGapAnnualTotal: number; // Annual
@@ -53,7 +70,7 @@ export interface AnalysisReport {
   meanAnnualWageMen: number;
   meanAnnualWageWomen: number;
   
-  // b) Loonkloof Variabel (Gemiddeld)
+  // b) LOONVERSCHILLEN MAN/VROUW Variabel (Gemiddeld)
   meanGapVariable: number; // Hourly
   meanGapAnnualVariable: number; // Annual
   meanVariableMen: number;
@@ -61,7 +78,7 @@ export interface AnalysisReport {
   meanAnnualVariableMen: number;
   meanAnnualVariableWomen: number;
   
-  // c) Mediane Loonkloof
+  // c) Mediane LOONVERSCHILLEN MAN/VROUW
   medianGapBase: number;
   medianGapTotal: number; // Hourly
   medianGapAnnualTotal: number; // Annual
@@ -70,7 +87,7 @@ export interface AnalysisReport {
   medianAnnualWageMen: number;
   medianAnnualWageWomen: number;
   
-  // d) Mediane Loonkloof Variabel
+  // d) Mediane LOONVERSCHILLEN MAN/VROUW Variabel
   medianGapVariable: number; // Hourly
   medianGapAnnualVariable: number; // Annual
   
@@ -83,4 +100,7 @@ export interface AnalysisReport {
   
   // g) Categorie uitsplitsing
   categoryGaps: CategoryGap[];
+
+  // h) Geslachtsverdeling per afdeling
+  departmentGenderBreakdown: DepartmentGenderBreakdown[];
 }

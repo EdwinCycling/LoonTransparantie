@@ -1,4 +1,4 @@
-import { Employee, AnalysisReport, Gender, QuartileData, CategoryGap } from '../types';
+import { Employee, AnalysisReport, Gender, QuartileData, CategoryGap, DepartmentGenderBreakdown } from '../types';
 
 // Helper: Calculate Mean
 export const calculateMean = (values: number[]): number => {
@@ -23,6 +23,12 @@ export const calculateGap = (valMen: number, valWomen: number): number => {
 export const analyzeData = (employees: Employee[]): AnalysisReport => {
   const men = employees.filter(e => e.gender === Gender.Male);
   const women = employees.filter(e => e.gender === Gender.Female);
+  const other = employees.filter(e => e.gender === Gender.Other);
+  const binaryEmployees = employees.filter(e => e.gender === Gender.Male || e.gender === Gender.Female);
+  const normalizeDepartment = (value: string | undefined): string => {
+    const trimmed = (value || '').trim();
+    return trimmed.length > 0 ? trimmed : 'Onbekend';
+  };
 
   // Arrays of values
   const menBase = men.map(e => e.baseHourlyWage);
@@ -88,7 +94,7 @@ export const analyzeData = (employees: Employee[]): AnalysisReport => {
   const percentReceivingVariableFemale = women.length ? parseFloat(((womenReceivingVar / women.length) * 100).toFixed(1)) : 0;
 
   // f) Quartiles
-  const sortedByTotal = [...employees].sort((a, b) => a.totalHourlyWage - b.totalHourlyWage);
+  const sortedByTotal = [...binaryEmployees].sort((a, b) => a.totalHourlyWage - b.totalHourlyWage);
   const totalCount = sortedByTotal.length;
   const quartiles: QuartileData[] = [];
 
@@ -112,7 +118,7 @@ export const analyzeData = (employees: Employee[]): AnalysisReport => {
 
   // g) Categories - now dynamic based on data
   const categoryGaps: CategoryGap[] = [];
-  const uniqueCategories = [...new Set(employees.map(e => e.jobCategory))].sort();
+  const uniqueCategories = [...new Set(binaryEmployees.map(e => e.jobCategory))].sort();
 
   uniqueCategories.forEach(cat => {
     const catMen = men.filter(e => e.jobCategory === cat);
@@ -142,10 +148,50 @@ export const analyzeData = (employees: Employee[]): AnalysisReport => {
     }
   });
 
+  const departmentMap = new Map<
+    string,
+    { totalEmployees: number; maleCount: number; femaleCount: number; otherCount: number }
+  >();
+
+  for (const employee of employees) {
+    const department = normalizeDepartment(employee.department);
+    const entry = departmentMap.get(department) || { totalEmployees: 0, maleCount: 0, femaleCount: 0, otherCount: 0 };
+    entry.totalEmployees += 1;
+    if (employee.gender === Gender.Male) entry.maleCount += 1;
+    if (employee.gender === Gender.Female) entry.femaleCount += 1;
+    if (employee.gender === Gender.Other) entry.otherCount += 1;
+    departmentMap.set(department, entry);
+  }
+
+  const departmentGenderBreakdown: DepartmentGenderBreakdown[] = Array.from(departmentMap.entries())
+    .map(([department, counts]) => {
+      const total = counts.totalEmployees;
+      const binaryCount = counts.maleCount + counts.femaleCount;
+
+      return {
+        department,
+        totalEmployees: total,
+        maleCount: counts.maleCount,
+        femaleCount: counts.femaleCount,
+        otherCount: counts.otherCount,
+        binaryCount,
+        malePercentage: total > 0 ? parseFloat(((counts.maleCount / total) * 100).toFixed(1)) : 0,
+        femalePercentage: total > 0 ? parseFloat(((counts.femaleCount / total) * 100).toFixed(1)) : 0,
+        otherPercentage: total > 0 ? parseFloat(((counts.otherCount / total) * 100).toFixed(1)) : 0,
+        binaryPercentage: total > 0 ? parseFloat(((binaryCount / total) * 100).toFixed(1)) : 0
+      };
+    })
+    .sort((a, b) => {
+      if (b.totalEmployees !== a.totalEmployees) return b.totalEmployees - a.totalEmployees;
+      return a.department.localeCompare(b.department, 'nl-NL');
+    });
+
   return {
     totalEmployees: employees.length,
     maleCount: men.length,
     femaleCount: women.length,
+    otherCount: other.length,
+    binaryCount: binaryEmployees.length,
     meanGapBase,
     meanGapTotal,
     meanGapAnnualTotal,
@@ -171,6 +217,7 @@ export const analyzeData = (employees: Employee[]): AnalysisReport => {
     percentReceivingVariableMale,
     percentReceivingVariableFemale,
     quartiles,
-    categoryGaps
+    categoryGaps,
+    departmentGenderBreakdown
   };
 };

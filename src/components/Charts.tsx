@@ -8,6 +8,8 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
+  PieChart as RechartsPieChart,
+  Pie,
   Cell
 } from 'recharts';
 
@@ -66,16 +68,56 @@ export const CategoryGapChart: React.FC<{ data: CategoryGapData[] }> = ({ data }
             style={{ fontSize: '12px', fontWeight: 500 }}
           />
           <Tooltip 
-            formatter={(value: number) => [`${value}%`, 'Loonkloof']}
+            formatter={(value: number) => [`${value}%`, 'LOONVERSCHILLEN MAN/VROUW']}
             contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
           />
           <Legend />
-          <Bar dataKey="meanGapTotal" name="Loonkloof Totaal (%)" radius={[0, 4, 4, 0]}>
+          <Bar dataKey="meanGapTotal" name="LOONVERSCHILLEN MAN/VROUW (%)" radius={[0, 4, 4, 0]}>
             {data.map((entry, index) => (
               <Cell key={`cell-${index}`} fill={entry.meanGapTotal > 5 ? '#ef4444' : '#10b981'} />
             ))}
           </Bar>
         </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};
+
+export interface GenderPieDatum {
+  label: string;
+  value: number;
+  color: string;
+}
+
+export const GenderPieChart: React.FC<{ data: GenderPieDatum[] }> = ({ data }) => {
+  const total = data.reduce((sum, item) => sum + item.value, 0);
+
+  return (
+    <div className="h-[260px] w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <RechartsPieChart>
+          <Tooltip
+            formatter={(value: number, name: string) => {
+              const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
+              return [`${value} (${percentage}%)`, name];
+            }}
+            contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+          />
+          <Legend />
+          <Pie
+            data={data}
+            dataKey="value"
+            nameKey="label"
+            innerRadius={55}
+            outerRadius={90}
+            paddingAngle={2}
+            stroke="transparent"
+          >
+            {data.map((entry) => (
+              <Cell key={entry.label} fill={entry.color} />
+            ))}
+          </Pie>
+        </RechartsPieChart>
       </ResponsiveContainer>
     </div>
   );

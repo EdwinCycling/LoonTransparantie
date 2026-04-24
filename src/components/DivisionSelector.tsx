@@ -23,6 +23,7 @@ const DivisionSelector: React.FC<DivisionSelectorProps> = ({ onDivisionSelected,
   const fetchDivisions = async () => {
     try {
       const res = await fetch('/api/divisions', {
+        credentials: 'include',
         headers: {
           'ngrok-skip-browser-warning': 'true'
         }
@@ -42,6 +43,7 @@ const DivisionSelector: React.FC<DivisionSelectorProps> = ({ onDivisionSelected,
     try {
       const res = await fetch('/api/set-division', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           'ngrok-skip-browser-warning': 'true'

@@ -10,7 +10,7 @@ const quotes = [
     gradient: "from-purple-500 to-purple-700",
   },
   {
-    text: "De loonkloof is geen natuurverschijnsel, het is het resultaat van systemische ongelijkheid die we nu eindelijk met data-gedreven transparantie kunnen aanpakken.",
+    text: "LOONVERSCHILLEN MAN/VROUW is geen natuurverschijnsel, het is het resultaat van systemische ongelijkheid die we nu eindelijk met data-gedreven transparantie kunnen aanpakken.",
     author: "Beleidsadviseur",
     company: "Europese Commissie",
     gradient: "from-[#C62828] to-[#B71C1C]",

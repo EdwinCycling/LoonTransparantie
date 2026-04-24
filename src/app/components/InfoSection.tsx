@@ -6,7 +6,7 @@ const features = [
   {
     icon: Scale,
     title: 'Gelijke Beloning',
-    description: 'Doorbreek de loonkloof en zorg voor eerlijke beloning voor iedereen',
+    description: 'Doorbreek LOONVERSCHILLEN MAN/VROUW en zorg voor eerlijke beloning voor iedereen',
     color: 'from-purple-500 to-purple-700',
   },
   {
