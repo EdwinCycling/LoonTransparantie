@@ -915,7 +915,92 @@ app.post('/api/kpi-agent/query', checkAppAuth, async (req, res) => {
     const baseSnapshot = snapshotResults.find((snapshot) => snapshot.label === 'T-0') || snapshotResults[0];
     const answerStyleInstruction = answerLength === 'kort'
       ? 'Geef een compact en zakelijk antwoord. Maximaal 4 korte alinea’s totaal, zonder uitweidingen. Houd elke sectie op 1 zin, behalve de tabel.'
-      : 'Geef een uitgebreid antwoord met duidelijke context en onderbouwing binnen het verplichte format.';
+      : 'Geef een uitgebreid antwoord met duidelijke context en onderbouwing binnen het verplichte format. Minimaal 4 secties (1 t/m 4) en altijd minimaal 1 tabel.';
+
+    const detectKpi = (text: string): string => {
+      const normalized = text.toLowerCase();
+      if (normalized.includes('jongste')) return 'youngest_active_employees';
+      if (normalized.includes('oudste')) return 'oldest_active_employees';
+      if (normalized.includes('verjaardag') || normalized.includes('jarig')) return 'upcoming_birthdays_4_weeks';
+      if (normalized.includes('contracturen') || normalized.includes('uren per week') || normalized.includes('contract uren')) {
+        return 'average_contract_hours_active_employees';
+      }
+      if (normalized.includes('leeftijd')) return 'average_age_active_employees';
+      return 'unknown';
+    };
+
+    const selectedKpi = detectKpi(question);
+    const kpiLabelMap: Record<string, string> = {
+      average_age_active_employees: 'Gemiddelde Leeftijd Actieve Medewerkers',
+      average_contract_hours_active_employees: 'Gemiddelde Contracturen Actieve Medewerkers',
+      youngest_active_employees: 'Jongste Actieve Medewerkers',
+      oldest_active_employees: 'Oudste Actieve Medewerkers',
+      upcoming_birthdays_4_weeks: 'Komende Verjaardagen (4 weken)',
+      unknown: 'HR KPI Rapport'
+    };
+
+    const snapshotSummary = snapshotResults.map((snapshot) => ({
+      label: snapshot.label,
+      date: snapshot.date,
+      activeEmployees: snapshot.activeEmployees,
+      averageAge: snapshot.averageAge,
+      averageContractHours: snapshot.averageContractHours
+    }));
+
+    const t0 = snapshotResults.find((s) => s.label === 'T-0');
+    const t12 = snapshotResults.find((s) => s.label === 'T-12');
+    const t24 = snapshotResults.find((s) => s.label === 'T-24');
+    const safeDelta = (current: number | null | undefined, previous: number | null | undefined): number | null => {
+      if (typeof current !== 'number' || typeof previous !== 'number') return null;
+      return Number((current - previous).toFixed(2));
+    };
+    const derivedDeltas = {
+      averageAgeDeltaVsT12: safeDelta(t0?.averageAge, t12?.averageAge),
+      averageAgeDeltaVsT24: safeDelta(t0?.averageAge, t24?.averageAge),
+      averageContractHoursDeltaVsT12: safeDelta(t0?.averageContractHours, t12?.averageContractHours),
+      averageContractHoursDeltaVsT24: safeDelta(t0?.averageContractHours, t24?.averageContractHours)
+    };
+
+    const outputFormatInstruction = (() => {
+      if (selectedKpi === 'average_contract_hours_active_employees') {
+        return `
+OUTPUT FORMAT (VERPLICHT)
+- Gebruik geen markdown-koppen met # of ###.
+- Gebruik exact deze sectiekoppen en volgorde: 1. Executive Summary, 2. Kerncijfers & Trend, 3. Analyse & Context, 4. Strategisch Advies.
+- Start altijd met: "${kpiLabelMap[selectedKpi]} - ${baseSnapshot?.date || 'onbekende peildatum'}" op de eerste regel.
+- Daarna 1 korte one-liner (1 zin) met de huidige stand.
+- Sectie 2 bevat altijd een markdown-tabel met contracturen:
+| Peildatum | Actieve medewerkers (n) | Gem. contracturen per week | Δ vs T-12 | Δ vs T-24 |
+| --- | ---: | ---: | ---: | ---: |
+- Als trendvergelijking niet beschikbaar is, zet Δ kolommen op "n.v.t.".
+- Gebruik waarden uit SNAPSHOT OVERZICHT / DELTAS en verzin niets.
+- ${answerStyleInstruction}
+`;
+      }
+      if (selectedKpi === 'average_age_active_employees') {
+        return `
+OUTPUT FORMAT (VERPLICHT)
+- Gebruik geen markdown-koppen met # of ###.
+- Gebruik exact deze sectiekoppen en volgorde: 1. Executive Summary, 2. Kerncijfers & Trend, 3. Analyse & Context, 4. Strategisch Advies.
+- Start altijd met: "${kpiLabelMap[selectedKpi]} - ${baseSnapshot?.date || 'onbekende peildatum'}" op de eerste regel.
+- Daarna 1 korte one-liner (1 zin) met de huidige stand.
+- Sectie 2 bevat altijd een markdown-tabel met gemiddelde leeftijd:
+| Peildatum | Actieve medewerkers (n) | Gem. leeftijd (jaar) | Δ vs T-12 | Δ vs T-24 |
+| --- | ---: | ---: | ---: | ---: |
+- Als trendvergelijking niet beschikbaar is, zet Δ kolommen op "n.v.t.".
+- Gebruik waarden uit SNAPSHOT OVERZICHT / DELTAS en verzin niets.
+- ${answerStyleInstruction}
+`;
+      }
+      return `
+OUTPUT FORMAT (VERPLICHT)
+- Gebruik geen markdown-koppen met # of ###.
+- Gebruik exact deze sectiekoppen en volgorde: 1. Executive Summary, 2. Kerncijfers & Trend, 3. Analyse & Context, 4. Strategisch Advies.
+- Start altijd met: "${kpiLabelMap[selectedKpi]} - ${baseSnapshot?.date || 'onbekende peildatum'}" op de eerste regel.
+- Sectie 2 bevat altijd minimaal 1 markdown-tabel passend bij de vraag.
+- ${answerStyleInstruction}
+`;
+    })();
 
     const modelPrompt = `
 ROL
@@ -938,14 +1023,11 @@ WERKWIJZE
 - Als X ontbreekt: gebruik standaard X=5.
 
 RAPPORTAGE RICHTLIJNEN
-- Structuur exact in deze volgorde: 2) Kerncijfers & Trend, 3) Analyse & Context, 4) Strategisch Advies, 1) Executive Summary (altijd als laatste).
 - Wees kritisch op risico's.
 - Gebruik begrijpelijke termen: "Loon voor loonbelasting" -> "Bruto Salaris", "FsIndFZ" -> "Flex-fase".
-- Maak de tabel als strakke markdown-tabel met precies dezelfde kolommen per rij.
-- Stijl voor antwoordlengte: ${answerStyleInstruction}
-- Gebruik nooit markdown-koppen met # of ###.
+- Maak tabellen als strakke markdown-tabellen met precies dezelfde kolommen per rij.
 - Trendvergelijking beschikbaar: ${trendComparisonAvailable ? 'JA' : 'NEE'}.
-- Als trendvergelijking NEE is: laat trendparagraaf volledig weg en gebruik kop "2. Kerncijfers" zonder trendtekst.
+- Als trendvergelijking NEE is: zet Δ-kolommen op "n.v.t." en houd de tekst beperkt tot de beschikbare peildatum.
 
 BEPERKINGEN
 - Toon geen technische GUID's of rauwe API-fouten.
@@ -966,17 +1048,14 @@ ${question}
 GESELECTEERDE PERIODE
 ${period}
 
+GESELECTEERDE KPI (heuristiek)
+${selectedKpi}
+
 SNAPSHOT OVERZICHT
-${JSON.stringify(snapshotResults.map((snapshot) => ({
-  label: snapshot.label,
-  date: snapshot.date,
-  activeEmployees: snapshot.activeEmployees,
-  averageAge: snapshot.averageAge,
-  averageContractHours: snapshot.averageContractHours,
-  youngestEmployees: snapshot.youngestEmployees,
-  oldestEmployees: snapshot.oldestEmployees,
-  upcomingBirthdays: snapshot.upcomingBirthdays
-})))}
+${JSON.stringify(snapshotSummary)}
+
+DELTAS (alleen als beschikbaar)
+${JSON.stringify(derivedDeltas)}
 
 AANVULLENDE_DEMOGRAFIE_T0
 ${JSON.stringify({
@@ -1000,6 +1079,8 @@ ${JSON.stringify(snapshotResults.map((snapshot) => ({
   label: snapshot.label,
   model: snapshot.hamModel
 })))}
+
+${outputFormatInstruction}
 `;
 
     apiCalls.push({ endpoint: 'Stap: AI-analyse', status: 'info', records: 1, message: `Gemini model ${geminiModel} verwerkt de prompt.` });
@@ -1009,7 +1090,7 @@ ${JSON.stringify(snapshotResults.map((snapshot) => ({
         contents: [{ role: 'user', parts: [{ text: sanitizeModelText(modelPrompt) }] }],
         generationConfig: {
           temperature: answerLength === 'kort' ? 0.1 : 0.2,
-          maxOutputTokens: answerLength === 'kort' ? 360 : 1500
+          maxOutputTokens: answerLength === 'kort' ? 360 : 2500
         }
       },
       {
