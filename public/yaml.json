@@ -1,0 +1,108 @@
+# Wizard extension notes:
+# - New KPI definitions may add `xml_extension` metadata.
+# - Keep metric code, formula, api_source and validation rules aligned with Tech specs and HAM.xml.
+- metric: "average_age_active_employees"
+  category: "Demographics"
+  description: "Gemiddelde leeftijd van actieve medewerkers op een gekozen peildatum."
+  formula: "average(floor((peildatum - geboortedatum) / 365.25))"
+  unit: "years"
+  api_source:
+    - "/api/v1/{division}/payroll/Employees"
+    - "/api/v1/{division}/payroll/Employments"
+  parameters:
+    period:
+      - "nu"
+      - "vorig_jaar"
+      - "trend"
+    snapshots:
+      trend:
+        - "T-0"
+        - "T-12_months"
+        - "T-24_months"
+  mapping_model: "HAM_2.0"
+  interpretation: "Stijgende trend duidt op vergrijzing; dalende trend op verjonging of instroom."
+  user_phrases:
+    - "Wat is de gemiddelde leeftijd van actieve medewerkers nu?"
+    - "Wat was de gemiddelde leeftijd vorig jaar?"
+    - "Laat de trend in gemiddelde leeftijd zien."
+- metric: "average_contract_hours_active_employees"
+  category: "Capacity"
+  description: "Gemiddelde contracturen per week van actieve medewerkers op een gekozen peildatum."
+  formula: "average(Dienstverbanden.Dienstverband.Capaciteit.ContractUrenPerWeek)"
+  unit: "hours_per_week"
+  api_source:
+    - "/api/v1/{division}/payroll/EmploymentSalaries"
+    - "/api/v1/{division}/payroll/Employments"
+  parameters:
+    period:
+      - "nu"
+      - "vorig_jaar"
+      - "trend"
+    snapshots:
+      trend:
+        - "T-0"
+        - "T-12_months"
+        - "T-24_months"
+  mapping_model: "HAM_2.0"
+  interpretation: "Dalende gemiddelde contracturen kunnen wijzen op toenemende flexibilisering of meer parttime inzet."
+  user_phrases:
+    - "Wat zijn de gemiddelde contracturen per week van actieve medewerkers nu?"
+    - "Wat waren de gemiddelde contracturen per week vorig jaar?"
+    - "Laat de trend zien van gemiddelde contracturen per week."
+- metric: "youngest_active_employees"
+  category: "Demographics"
+  description: "Lijst van jongste actieve medewerkers op peildatum met naam en leeftijd."
+  formula: "sort_asc(leeftijd_op_peildatum) -> top_X"
+  unit: "employees"
+  api_source:
+    - "/api/v1/{division}/payroll/Employments"
+    - "/api/v1/{division}/payroll/Employees"
+  parameters:
+    period:
+      - "nu"
+    list_size:
+      - "X"
+  mapping_model: "HAM_2.0"
+  interpretation: "Geeft inzicht in jonge instroom en leeftijdsopbouw van de actieve populatie."
+  user_phrases:
+    - "Geef de jongste 5 medewerkers met hun leeftijd."
+    - "Toon de jongste 10 actieve medewerkers."
+    - "Wie zijn de jongste medewerkers nu?"
+- metric: "oldest_active_employees"
+  category: "Demographics"
+  description: "Lijst van oudste actieve medewerkers op peildatum met naam en leeftijd."
+  formula: "sort_desc(leeftijd_op_peildatum) -> top_X"
+  unit: "employees"
+  api_source:
+    - "/api/v1/{division}/payroll/Employments"
+    - "/api/v1/{division}/payroll/Employees"
+  parameters:
+    period:
+      - "nu"
+    list_size:
+      - "X"
+  mapping_model: "HAM_2.0"
+  interpretation: "Ondersteunt planning voor opvolging, kennisbehoud en duurzame inzetbaarheid."
+  user_phrases:
+    - "Geef de oudste 5 medewerkers met hun leeftijd."
+    - "Toon de oudste 10 actieve medewerkers."
+    - "Wie zijn de oudste medewerkers nu?"
+- metric: "upcoming_birthdays_4_weeks"
+  category: "Planning"
+  description: "Komende verjaardagen van actieve medewerkers in de komende 4 weken."
+  formula: "next_birthday_within_28_days(active_population) sorted_by_days_until"
+  unit: "employees"
+  api_source:
+    - "/api/v1/{division}/payroll/Employments"
+    - "/api/v1/{division}/payroll/Employees"
+  parameters:
+    horizon_days:
+      - "28"
+    sort:
+      - "days_until_asc"
+  mapping_model: "HAM_2.0"
+  interpretation: "Ondersteunt operationele planning en medewerkerscommunicatie."
+  user_phrases:
+    - "Geef komende verjaardagen in de komende 4 weken."
+    - "Toon verjaardagen komende 28 dagen gesorteerd op datum."
+    - "Welke medewerkers zijn binnenkort jarig?"

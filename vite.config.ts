@@ -5,14 +5,27 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
+  const redirectUri = env.REDIRECT_URI || process.env.REDIRECT_URI || '';
+  const allowedHostsSet = new Set<string>([
+    'localhost',
+    '127.0.0.1',
+    'unmerited-diuretically-angeline.ngrok-free.dev'
+  ]);
+  if (redirectUri) {
+    try {
+      const host = new URL(redirectUri).host;
+      if (host) {
+        allowedHostsSet.add(host);
+      }
+    } catch {
+    }
+  }
   return {
     server: {
       port: 3000,
       strictPort: true,
       host: '0.0.0.0',
-      allowedHosts: [
-        'unmerited-diuretically-angeline.ngrok-free.dev'
-      ],
+      allowedHosts: Array.from(allowedHostsSet),
       proxy: {
         '/api': {
           target: 'http://localhost:3020',

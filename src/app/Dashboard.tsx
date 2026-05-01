@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Printer, RefreshCw, PieChart, Download, Table as TableIcon, X, LogOut, FileText, User, BarChart2, Search, Bot, Activity, MessageSquare, SendHorizontal } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Printer, RefreshCw, PieChart, Download, Table as TableIcon, X, LogOut, FileText, User, BarChart2, Search, Bot, Activity, MessageSquare, SendHorizontal, ShieldCheck } from 'lucide-react';
 import { analyzeData, calculateMean, calculateGap } from '../services/calculationService';
 import { AnalysisReport, Employee, Gender } from '../types';
 import MetricCard from '../components/MetricCard';
@@ -7,6 +7,7 @@ import { QuartileChart, CategoryGapChart, GenderPieChart } from '../components/C
 import IntroPage from '../components/IntroPage';
 import DivisionSelector from '../components/DivisionSelector';
 import EmployeeReport from '../components/EmployeeReport';
+import KpiBuilderWizard from '../components/KpiBuilderWizard';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
@@ -18,6 +19,7 @@ type ViewMode = 'dashboard' | 'explanation' | 'employee_check';
 type FunctionalityMode = 'loontransparantie' | 'kpi_agent';
 type AgentPeriod = 'nu' | 'vorig_jaar' | 'trend';
 type AnswerLength = 'kort' | 'lang';
+type AgentQueryMode = 'static' | 'dynamic';
 
 interface AgentApiCall {
   endpoint: string;
@@ -110,6 +112,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
   const [agentQuestion, setAgentQuestion] = useState('');
   const [agentPeriod, setAgentPeriod] = useState<AgentPeriod>('nu');
   const [answerLength, setAnswerLength] = useState<AnswerLength>('lang');
+  const [agentQueryMode, setAgentQueryMode] = useState<AgentQueryMode>('static');
   const [agentApiCalls, setAgentApiCalls] = useState<AgentApiCall[]>([]);
   const [agentLoading, setAgentLoading] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
@@ -135,6 +138,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
   const [showApiMonitorPanel, setShowApiMonitorPanel] = useState(true);
   const [showKpiParametersPanel, setShowKpiParametersPanel] = useState(true);
   const [showYamlPanel, setShowYamlPanel] = useState(true);
+  const [showKpiBuilderWizard, setShowKpiBuilderWizard] = useState(false);
+  const [showKpiAgentPinModal, setShowKpiAgentPinModal] = useState(false);
+  const [kpiAgentPin, setKpiAgentPin] = useState('');
+  const [kpiAgentPinLoading, setKpiAgentPinLoading] = useState(false);
+  const [kpiAgentPinError, setKpiAgentPinError] = useState<string | null>(null);
+  const [kpiAgentPinConfigured, setKpiAgentPinConfigured] = useState<boolean | null>(null);
+  const [kpiAgentAttemptsRemaining, setKpiAgentAttemptsRemaining] = useState<number | null>(null);
+  const [kpiAgentLockedUntil, setKpiAgentLockedUntil] = useState<number | null>(null);
   
   // New State for View Mode
   const [viewMode, setViewMode] = useState<ViewMode>('dashboard');
@@ -409,9 +420,81 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
   };
 
   const handleFunctionalitySelected = (mode: FunctionalityMode) => {
+    if (mode === 'kpi_agent') {
+      setKpiAgentPin('');
+      setKpiAgentPinError(null);
+      setShowKpiAgentPinModal(true);
+      loadKpiAgentPinStatus();
+      return;
+    }
+
     setSelectedFunctionality(mode);
     if (mode === 'loontransparantie') {
       fetchData();
+    }
+  };
+
+  const loadKpiAgentPinStatus = async () => {
+    try {
+      const response = await fetch('/api/kpi-agent/status', {
+        credentials: 'include',
+        headers: { 'ngrok-skip-browser-warning': 'true' }
+      });
+      const text = await response.text();
+      const data = text ? JSON.parse(text) : {};
+      setKpiAgentPinConfigured(data.pinConfigured === true);
+      setKpiAgentAttemptsRemaining(typeof data.remainingAttempts === 'number' ? data.remainingAttempts : null);
+      setKpiAgentLockedUntil(typeof data.lockedUntil === 'number' ? data.lockedUntil : null);
+    } catch {
+      setKpiAgentPinConfigured(false);
+      setKpiAgentAttemptsRemaining(null);
+      setKpiAgentLockedUntil(null);
+    }
+  };
+
+  const unlockKpiAgent = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (kpiAgentPinLoading) {
+      return;
+    }
+
+    setKpiAgentPinLoading(true);
+    setKpiAgentPinError(null);
+
+    try {
+      const response = await fetch('/api/kpi-agent/unlock', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
+        },
+        body: JSON.stringify({ pin: kpiAgentPin })
+      });
+
+      const text = await response.text();
+      let data: any = {};
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch {
+          throw new Error(`Error: ${text.slice(0, 180)}`);
+        }
+      }
+
+      if (!response.ok || data.success !== true) {
+        setKpiAgentAttemptsRemaining(typeof data.remainingAttempts === 'number' ? data.remainingAttempts : kpiAgentAttemptsRemaining);
+        setKpiAgentLockedUntil(typeof data.lockedUntil === 'number' ? data.lockedUntil : null);
+        throw new Error(data?.error || 'Error: Pincode verificatie mislukt.');
+      }
+
+      setShowKpiAgentPinModal(false);
+      setSelectedFunctionality('kpi_agent');
+    } catch (err: any) {
+      setKpiAgentPinError(err.message || 'Error: Pincode verificatie mislukt.');
+      await loadKpiAgentPinStatus();
+    } finally {
+      setKpiAgentPinLoading(false);
     }
   };
 
@@ -932,6 +1015,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
     </button>
   );
 
+  const renderAgentModeButton = (mode: AgentQueryMode, label: string, description: string) => (
+    <button
+      type="button"
+      onClick={() => setAgentQueryMode(mode)}
+      className={`flex-1 rounded-xl border px-3 py-3 text-left transition ${
+        agentQueryMode === mode
+          ? 'border-indigo-600 bg-indigo-50 text-indigo-900'
+          : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+      }`}
+    >
+      <div className="text-sm font-semibold">{label}</div>
+      <div className="mt-1 text-xs text-slate-500">{description}</div>
+    </button>
+  );
+
   const submitAgentQuestion = async (questionOverride?: string, periodOverride?: AgentPeriod) => {
     const finalPeriod = periodOverride || agentPeriod;
     const finalQuestion = (questionOverride || agentQuestion).trim();
@@ -949,7 +1047,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
     setAgentError(null);
     setAgentApiCalls([
       { endpoint: 'Stap 1: Vraag ontvangen', status: 'success', records: 1, message: 'Vraag is verwerkt in de chat.' },
-      { endpoint: 'Stap 2: API-route bepalen', status: 'pending', records: 0, message: 'Beschikbare API endpoints worden gecontroleerd.' },
+      { endpoint: 'Stap 2: API-route bepalen', status: 'pending', records: 0, message: `Beschikbare API endpoints worden gecontroleerd voor ${agentQueryMode === 'dynamic' ? 'dynamische' : 'statische'} modus.` },
       { endpoint: 'Stap 3: Data-analyse starten', status: 'pending', records: 0, message: 'Exact-data en snapshotberekening worden voorbereid.' },
       { endpoint: 'Stap 4: AI-rapport opstellen', status: 'pending', records: 0, message: 'Gemini bouwt het rapport op basis van HAM en YAML.' }
     ]);
@@ -976,7 +1074,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
             body: JSON.stringify({
               question: finalQuestion,
               period: finalPeriod,
-              answerLength
+              answerLength,
+              mode: agentQueryMode
             })
           });
 
@@ -1060,6 +1159,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
   if (!hasDivision) return <DivisionSelector onDivisionSelected={handleDivisionSelected} onExactLogout={handleExactLogout} />;
 
   if (!selectedFunctionality) {
+    const lockedForSeconds = kpiAgentLockedUntil && kpiAgentLockedUntil > Date.now()
+      ? Math.ceil((kpiAgentLockedUntil - Date.now()) / 1000)
+      : 0;
+
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
         <div className="max-w-5xl w-full bg-white rounded-2xl shadow-2xl p-8 md:p-10">
@@ -1090,6 +1193,73 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
             </button>
           </div>
         </div>
+
+        {showKpiAgentPinModal && (
+          <div className="fixed inset-0 z-[140] flex items-center justify-center bg-slate-950/70 p-4">
+            <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-2xl">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-xl font-bold text-slate-900">Beveiliging HR & Payroll KPI Agent</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Voer de 4-cijferige pincode in om deze functionaliteit te openen.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowKpiAgentPinModal(false)}
+                  className="rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                  aria-label="Sluit pincode scherm"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {kpiAgentPinConfigured === false && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                  Error: PINCODE ontbreekt of is ongeldig in de serverconfiguratie.
+                </div>
+              )}
+
+              {kpiAgentPinError && (
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  {kpiAgentPinError}
+                </div>
+              )}
+
+              <form className="mt-6 space-y-4" onSubmit={unlockKpiAgent}>
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-slate-700">Pincode</label>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    pattern="[0-9]{4}"
+                    maxLength={4}
+                    value={kpiAgentPin}
+                    onChange={(event) => setKpiAgentPin(event.target.value.replace(/\\D/g, '').slice(0, 4))}
+                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-lg tracking-[0.4em] outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+                    placeholder="0000"
+                    disabled={kpiAgentPinConfigured === false || kpiAgentPinLoading || lockedForSeconds > 0}
+                    required
+                  />
+                </div>
+
+                <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
+                  <div>Resterende pogingen: {typeof kpiAgentAttemptsRemaining === 'number' ? kpiAgentAttemptsRemaining : '-'}</div>
+                  {lockedForSeconds > 0 && (
+                    <div className="mt-2 text-red-600">Tijdelijke blokkade actief: nog {lockedForSeconds} seconden.</div>
+                  )}
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={kpiAgentPinConfigured === false || kpiAgentPinLoading || lockedForSeconds > 0 || kpiAgentPin.length !== 4}
+                  className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                >
+                  {kpiAgentPinLoading ? 'Pincode controleren...' : 'Open KPI Agent'}
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1122,6 +1292,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
           <div className="h-16 px-6 border-b border-slate-200 bg-white flex items-center justify-between gap-4">
             <h1 className="text-xl font-bold text-gray-900">HR & Payroll KPI Agent</h1>
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowKpiBuilderWizard(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 border border-indigo-200 rounded-md text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                KPI Wizard
+              </button>
               {renderVisibilitySwitch('Monitor', showApiMonitorPanel, () => setShowApiMonitorPanel((prev) => !prev))}
               {renderVisibilitySwitch('Parameters', showKpiParametersPanel, () => setShowKpiParametersPanel((prev) => !prev))}
               {renderVisibilitySwitch('YAML', showYamlPanel, () => setShowYamlPanel((prev) => !prev))}
@@ -1419,6 +1596,18 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
                 </div>
 
                 <div className="px-4 py-3 border-t border-slate-200 bg-white">
+                  <div className="mb-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-slate-600">Analysemodus</span>
+                      <span className="text-[11px] text-slate-500">
+                        {agentQueryMode === 'dynamic' ? 'Nieuwe YAML-gestuurde methode' : 'Bestaande vaste methode'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                      {renderAgentModeButton('static', 'Statisch', 'Behoudt de bestaande vaste KPI-herkenning en rapportage.')}
+                      {renderAgentModeButton('dynamic', 'Dynamisch', 'Leest KPI-definities uit yaml.json en gebruikt nieuwe wizard-KPI’s.')}
+                    </div>
+                  </div>
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <span className="text-xs font-semibold text-slate-600">Lengte antwoord</span>
                     <div className="inline-flex rounded-md border border-slate-200 overflow-hidden">
@@ -1527,6 +1716,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onAppLogout }) => {
             </div>
           </div>
         )}
+        <KpiBuilderWizard open={showKpiBuilderWizard} onClose={() => setShowKpiBuilderWizard(false)} />
       </div>
     );
   }

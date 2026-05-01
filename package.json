@@ -8,6 +8,7 @@
     "build": "vite build",
     "start": "set PORT=3020 && tsx server/server.ts",
     "start:server": "set PORT=3020 && tsx server/server.ts",
+    "start:all": "start \"\" start_all.bat",
     "preview": "vite preview"
   },
   "dependencies": {

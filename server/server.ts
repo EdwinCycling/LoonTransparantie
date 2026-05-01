@@ -1,10 +1,11 @@
 import express from 'express';
 import session from 'express-session';
 import axios from 'axios';
+import { timingSafeEqual } from 'crypto';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { readFile } from 'fs/promises';
+import { readFile, stat, writeFile } from 'fs/promises';
 import { ExactToken } from './types';
 
 // Load environment variables
@@ -20,6 +21,9 @@ declare module 'express-session' {
     token?: ExactToken;
     division?: number;
     isAppAuthorized?: boolean;
+    isKpiAgentAuthorized?: boolean;
+    kpiAgentFailedAttempts?: number;
+    kpiAgentLockedUntil?: number;
   }
 }
 
@@ -72,6 +76,7 @@ const EXACT_API_URL = 'https://start.exactonline.nl/api/v1';
 
 type AgentPeriod = 'nu' | 'vorig_jaar' | 'trend';
 type AnswerLength = 'kort' | 'lang';
+type AgentQueryMode = 'static' | 'dynamic';
 
 interface AgentApiCall {
   endpoint: string;
@@ -79,6 +84,62 @@ interface AgentApiCall {
   records: number;
   message?: string;
 }
+
+interface ExactDocSection {
+  title: string;
+  uri: string;
+  scope: string;
+  summary: string;
+  properties: string[];
+  content: string;
+  score?: number;
+}
+
+interface KpiBuilderDraftPayload {
+  name?: string;
+  code?: string;
+  category?: string;
+  description?: string;
+  businessQuestion?: string;
+  formula?: string;
+  unit?: string;
+  aggregation?: string;
+  interpretation?: string;
+  validationRules?: string;
+  periodModes?: string[];
+  contextPath?: string;
+  employeeAttributeCode?: string;
+  employeeAttributeLabel?: string;
+  employeeAttributeDatatype?: string;
+  employeeAttributeSourceField?: string;
+  userPhrases?: string;
+  selectedEndpoints?: string[];
+}
+
+interface YamlKpiDefinition {
+  metric: string;
+  category: string;
+  description: string;
+  formula: string;
+  unit: string;
+  aggregation: string;
+  apiSource: string[];
+  periodModes: string[];
+  interpretation: string;
+  userPhrases: string[];
+  validationRules: string[];
+  sourceField: string;
+  employeeAttributeCode: string;
+  employeeAttributeType: string;
+  contextPath: string;
+}
+
+const YAML_PATH = path.join(__dirname, '../public/yaml.json');
+const HAM_PATH = path.join(__dirname, '../public/HAM.xml');
+const TECH_SPECS_PATH = path.join(__dirname, '../public/Tech specs.md');
+const EXACT_DOCS_PATH = path.join(__dirname, '../public/Exact_Online_Full_API_Docs.md');
+const KPI_AGENT_MAX_FAILED_ATTEMPTS = 5;
+const KPI_AGENT_LOCK_MS = 5 * 60 * 1000;
 
 const STRATEGIC_HR_AGENT_INSTRUCTION = `Systeeminstructie: Persona "Strategisch HR-Analist"
 1. Rol en Profiel
@@ -273,6 +334,826 @@ function sanitizeModelText(text: string): string {
     .replace(/"ID"\s*:\s*"[^"]+"/g, '"ID":"[hidden-id]"');
 }
 
+function getConfiguredKpiAgentPin(): string | null {
+  const pin = (process.env.PINCODE || '').trim();
+  return /^[0-9]{4}$/.test(pin) ? pin : null;
+}
+
+function getRemainingKpiAgentAttempts(req: express.Request): number {
+  const failedAttempts = Math.max(0, req.session.kpiAgentFailedAttempts || 0);
+  return Math.max(0, KPI_AGENT_MAX_FAILED_ATTEMPTS - failedAttempts);
+}
+
+function isKpiAgentTemporarilyLocked(req: express.Request): boolean {
+  return typeof req.session.kpiAgentLockedUntil === 'number' && req.session.kpiAgentLockedUntil > Date.now();
+}
+
+function securePinMatches(inputPin: string, configuredPin: string): boolean {
+  const inputBuffer = Buffer.from(inputPin);
+  const configuredBuffer = Buffer.from(configuredPin);
+  if (inputBuffer.length !== configuredBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(inputBuffer, configuredBuffer);
+}
+
+const requireKpiAgentAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const configuredPin = getConfiguredKpiAgentPin();
+  if (!configuredPin) {
+    return res.status(503).json({ error: 'Error: PINCODE ontbreekt of is ongeldig in de serverconfiguratie.' });
+  }
+  if (!req.session.isKpiAgentAuthorized) {
+    return res.status(403).json({ error: 'Error: HR & Payroll KPI Agent is vergrendeld.' });
+  }
+  return next();
+};
+
+function extractMarkdownSection(content: string, heading: string): string {
+  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = content.match(new RegExp(`## ${escapedHeading}\\s+([\\s\\S]*?)(?=\\n## |$)`));
+  return match?.[1]?.trim() || '';
+}
+
+function summarizeDocContent(content: string): string {
+  return content
+    .replace(/\|/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 280);
+}
+
+function parseDocProperties(content: string): string[] {
+  const propertiesSection = extractMarkdownSection(content, 'Properties');
+  if (!propertiesSection) {
+    return [];
+  }
+
+  return propertiesSection
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('|'))
+    .map((line) => line.split('|').map((part) => part.trim()))
+    .map((cells) => cells[2] || '')
+    .filter((value) => value.length > 0 && value !== 'Name ↑↓' && value !== '---');
+}
+
+function parseExactDocumentationSections(markdown: string): ExactDocSection[] {
+  return markdown
+    .split('\n# Exact Online REST API - ')
+    .slice(1)
+    .map((chunk) => {
+      const [titleLine, ...rest] = chunk.split('\n');
+      const title = titleLine.trim();
+      const content = rest.join('\n').trim();
+      const uriSection = extractMarkdownSection(content, 'URI');
+      const uri = uriSection
+        .split('\n')
+        .map((line) => line.trim())
+        .find((line) => line.startsWith('/api/v1/')) || '';
+      const scope = extractMarkdownSection(content, 'Scope').replace(/\s+/g, ' ').trim() || 'Unknown';
+      const summary = summarizeDocContent(extractMarkdownSection(content, 'Good to know') || content);
+      const properties = parseDocProperties(content);
+
+      return {
+        title,
+        uri,
+        scope,
+        summary,
+        properties,
+        content
+      };
+    })
+    .filter((section) => section.uri.length > 0);
+}
+
+function getSearchTokens(input: string): string[] {
+  return Array.from(new Set(
+    input
+      .toLowerCase()
+      .split(/[^a-z0-9]+/i)
+      .map((token) => token.trim())
+      .filter((token) => token.length >= 2)
+  ));
+}
+
+function searchExactDocumentation(sections: ExactDocSection[], query: string, limit = 8): ExactDocSection[] {
+  const tokens = getSearchTokens(query);
+  if (tokens.length === 0) {
+    return sections.slice(0, limit);
+  }
+
+  return sections
+    .map((section) => {
+      const haystack = `${section.title} ${section.uri} ${section.scope} ${section.summary} ${section.properties.join(' ')}`.toLowerCase();
+      const score = tokens.reduce((total, token) => {
+        if (section.title.toLowerCase().includes(token)) return total + 7;
+        if (section.uri.toLowerCase().includes(token)) return total + 5;
+        if (section.properties.some((property) => property.toLowerCase().includes(token))) return total + 4;
+        if (haystack.includes(token)) return total + 2;
+        return total;
+      }, 0);
+      return { ...section, score };
+    })
+    .filter((section) => (section.score || 0) > 0)
+    .sort((a, b) => {
+      if ((b.score || 0) !== (a.score || 0)) {
+        return (b.score || 0) - (a.score || 0);
+      }
+      return a.title.localeCompare(b.title, 'en');
+    })
+    .slice(0, limit);
+}
+
+function parseExistingMetricCodes(yamlContent: string): string[] {
+  const matches = yamlContent.matchAll(/^- metric:\s*"([^"]+)"/gm);
+  return Array.from(matches, (match) => match[1]).filter((value, index, array) => array.indexOf(value) === index);
+}
+
+function slugifyMetricCode(input: string): string {
+  return input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80);
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function normalizeBuilderDraft(draft: KpiBuilderDraftPayload) {
+  const name = String(draft.name || '').trim();
+  const code = String(draft.code || slugifyMetricCode(name)).trim();
+  const category = String(draft.category || 'Operations').trim() || 'Operations';
+  const description = String(draft.description || '').trim();
+  const businessQuestion = String(draft.businessQuestion || '').trim();
+  const formula = String(draft.formula || '').trim();
+  const unit = String(draft.unit || '').trim();
+  const aggregation = String(draft.aggregation || 'average').trim() || 'average';
+  const interpretation = String(draft.interpretation || '').trim();
+  const validationRules = String(draft.validationRules || '').trim();
+  const contextPath = String(draft.contextPath || 'HRAnalysisModel/KPIExtensies/KPI').trim() || 'HRAnalysisModel/KPIExtensies/KPI';
+  const employeeAttributeCode = String(draft.employeeAttributeCode || `${code}_value`).trim() || `${code}_value`;
+  const employeeAttributeLabel = String(draft.employeeAttributeLabel || name || 'Nieuwe KPI').trim() || name || 'Nieuwe KPI';
+  const employeeAttributeDatatype = String(draft.employeeAttributeDatatype || 'decimal').trim() || 'decimal';
+  const employeeAttributeSourceField = String(draft.employeeAttributeSourceField || '').trim();
+  const periodModes = Array.isArray(draft.periodModes)
+    ? draft.periodModes.map((mode) => String(mode || '').trim()).filter(Boolean)
+    : [];
+  const selectedEndpoints = Array.isArray(draft.selectedEndpoints)
+    ? draft.selectedEndpoints.map((endpoint) => String(endpoint || '').trim()).filter(Boolean)
+    : [];
+  const userPhrases = String(draft.userPhrases || '').trim();
+
+  return {
+    name,
+    code,
+    category,
+    description,
+    businessQuestion,
+    formula,
+    unit,
+    aggregation,
+    interpretation,
+    validationRules,
+    periodModes: periodModes.length > 0 ? periodModes : ['nu'],
+    contextPath,
+    employeeAttributeCode,
+    employeeAttributeLabel,
+    employeeAttributeDatatype,
+    employeeAttributeSourceField,
+    userPhrases,
+    selectedEndpoints
+  };
+}
+
+function validateKpiBuilderDraft(draft: ReturnType<typeof normalizeBuilderDraft>): string[] {
+  const errors: string[] = [];
+
+  if (!draft.name) errors.push('Error: KPI naam ontbreekt.');
+  if (!draft.code) errors.push('Error: Metric code ontbreekt.');
+  if (draft.code && !/^[a-z0-9_]+$/.test(draft.code)) errors.push('Error: Metric code mag alleen kleine letters, cijfers en underscores bevatten.');
+  if (!draft.description) errors.push('Error: Beschrijving ontbreekt.');
+  if (!draft.businessQuestion) errors.push('Error: Managementvraag ontbreekt.');
+  if (!draft.formula) errors.push('Error: Formule ontbreekt.');
+  if (!draft.unit) errors.push('Error: Eenheid ontbreekt.');
+  if (draft.selectedEndpoints.length === 0) errors.push('Error: Selecteer minimaal 1 Exact endpoint.');
+  if (!draft.employeeAttributeSourceField) errors.push('Error: Bronveld voor medewerkerattribuut ontbreekt.');
+  if (!draft.employeeAttributeCode) errors.push('Error: Medewerkerattribuutcode ontbreekt.');
+
+  return errors;
+}
+
+function buildKpiYamlSnippet(draft: ReturnType<typeof normalizeBuilderDraft>): string {
+  const phrases = draft.userPhrases
+    .split('\n')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return [
+    `- metric: "${draft.code}"`,
+    `  category: "${draft.category}"`,
+    `  description: "${draft.description.replace(/"/g, "'")}"`,
+    `  formula: "${draft.formula.replace(/"/g, "'")}"`,
+    `  unit: "${draft.unit}"`,
+    `  aggregation: "${draft.aggregation}"`,
+    '  api_source:',
+    ...draft.selectedEndpoints.map((endpoint) => `    - "${endpoint}"`),
+    '  parameters:',
+    '    period:',
+    ...draft.periodModes.map((mode) => `      - "${mode}"`),
+    '  mapping_model: "HAM_2.0"',
+    '  xml_extension:',
+    `    context_path: "${draft.contextPath}"`,
+    '    employee_attribute_path: "HRAnalysisModel/Medewerkers/Medewerker/KPIAttributen/Attribuut"',
+    `    employee_attribute_code: "${draft.employeeAttributeCode}"`,
+    `    employee_attribute_type: "${draft.employeeAttributeDatatype}"`,
+    `    source_field: "${draft.employeeAttributeSourceField.replace(/"/g, "'")}"`,
+    `  interpretation: "${(draft.interpretation || 'Voeg hier de zakelijke duiding toe.').replace(/"/g, "'")}"`,
+    '  validation_rules:',
+    ...((draft.validationRules || 'Controleer populatie > 0.\nControleer verplichte bronvelden.')
+      .split('\n')
+      .map((rule) => rule.trim())
+      .filter(Boolean)
+      .map((rule) => `    - "${rule.replace(/"/g, "'")}"`)),
+    '  user_phrases:',
+    ...(phrases.length > 0 ? phrases : ['Wat is deze KPI nu?', 'Laat de trend van deze KPI zien.'])
+      .map((phrase) => `    - "${phrase.replace(/"/g, "'")}"`)
+  ].join('\n');
+}
+
+function buildKpiTechSpecsSnippet(draft: ReturnType<typeof normalizeBuilderDraft>): string {
+  const rules = (draft.validationRules || 'Controleer of brondata aanwezig is.\nGeen aannames buiten beschikbare dataset.')
+    .split('\n')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return [
+    '<!-- PAGE BREAK -->',
+    '',
+    `# KPI - ${draft.name}`,
+    '',
+    '## Functioneel doel',
+    draft.description,
+    '',
+    '## API-bronnen',
+    ...draft.selectedEndpoints.map((endpoint) => `- \`${endpoint}\``),
+    '',
+    '## Snapshotlogica',
+    '- Definieer hier wanneer een record actief of relevant is op peildatum.',
+    `- Bepaal medewerkerattribuut \`${draft.employeeAttributeCode}\` vanuit het gekozen bronveld \`${draft.employeeAttributeSourceField}\`.`,
+    '',
+    '## Formule',
+    `\`${draft.formula}\``,
+    '',
+    '## YAML-koppeling',
+    `- metric: \`${draft.code}\``,
+    `- unit: \`${draft.unit}\``,
+    `- parameters: \`${draft.periodModes.join(', ')}\``,
+    '',
+    '## HAM-opbouw',
+    `- Root pad: \`${draft.contextPath}\``,
+    '- Medewerkerpad: `HRAnalysisModel/Medewerkers/Medewerker/KPIAttributen/Attribuut`',
+    `- Attribuutcode: \`${draft.employeeAttributeCode}\``,
+    '',
+    '## AI-rapportage',
+    '- Gebruik een tabel met peildatum, waarde en relevante delta.',
+    `- Interpretatie: ${draft.interpretation || 'Voeg hier de zakelijke interpretatie toe.'}`,
+    '',
+    '## Validatie',
+    ...rules.map((rule) => `- ${rule}`)
+  ].join('\n');
+}
+
+async function loadBuilderAssets(): Promise<{
+  yamlContent: string;
+  hamContent: string;
+  techSpecsContent: string;
+  exactDocsContent: string;
+  exactDocsUpdatedAt: string | null;
+}> {
+  const [yamlContent, hamContent, techSpecsContent, exactDocsContent, exactDocsStats] = await Promise.all([
+    readFile(YAML_PATH, 'utf-8'),
+    readFile(HAM_PATH, 'utf-8'),
+    readFile(TECH_SPECS_PATH, 'utf-8'),
+    readFile(EXACT_DOCS_PATH, 'utf-8'),
+    stat(EXACT_DOCS_PATH).catch(() => null)
+  ]);
+
+  return {
+    yamlContent,
+    hamContent,
+    techSpecsContent,
+    exactDocsContent,
+    exactDocsUpdatedAt: exactDocsStats?.mtime?.toISOString?.() || null
+  };
+}
+
+function unquoteYamlValue(value: string): string {
+  const trimmed = value.trim();
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function parseYamlKpiDefinitions(yamlContent: string): YamlKpiDefinition[] {
+  const lines = yamlContent.split(/\r?\n/);
+  const definitions: YamlKpiDefinition[] = [];
+  let current: YamlKpiDefinition | null = null;
+  let section = '';
+  let subSection = '';
+
+  const pushCurrent = () => {
+    if (!current?.metric) {
+      return;
+    }
+    definitions.push({
+      ...current,
+      aggregation: current.aggregation || 'average',
+      apiSource: current.apiSource || [],
+      periodModes: current.periodModes.length > 0 ? current.periodModes : ['nu'],
+      userPhrases: current.userPhrases || [],
+      validationRules: current.validationRules || []
+    });
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\t/g, '    ');
+    const trimmed = line.trim();
+
+    if (!trimmed || trimmed.startsWith('#')) {
+      continue;
+    }
+
+    if (line.startsWith('- metric:')) {
+      pushCurrent();
+      current = {
+        metric: unquoteYamlValue(line.slice(line.indexOf(':') + 1)),
+        category: '',
+        description: '',
+        formula: '',
+        unit: '',
+        aggregation: 'average',
+        apiSource: [],
+        periodModes: [],
+        interpretation: '',
+        userPhrases: [],
+        validationRules: [],
+        sourceField: '',
+        employeeAttributeCode: '',
+        employeeAttributeType: '',
+        contextPath: ''
+      };
+      section = '';
+      subSection = '';
+      continue;
+    }
+
+    if (!current) {
+      continue;
+    }
+
+    if (line.startsWith('  ') && !line.startsWith('    ') && trimmed.endsWith(':')) {
+      section = trimmed.slice(0, -1);
+      subSection = '';
+      continue;
+    }
+
+    if (line.startsWith('  ') && !line.startsWith('    ') && trimmed.includes(':')) {
+      const separatorIndex = trimmed.indexOf(':');
+      const key = trimmed.slice(0, separatorIndex).trim();
+      const value = unquoteYamlValue(trimmed.slice(separatorIndex + 1));
+      section = '';
+      subSection = '';
+
+      if (key === 'category') current.category = value;
+      if (key === 'description') current.description = value;
+      if (key === 'formula') current.formula = value;
+      if (key === 'unit') current.unit = value;
+      if (key === 'aggregation') current.aggregation = value || 'average';
+      if (key === 'interpretation') current.interpretation = value;
+      continue;
+    }
+
+    if (line.startsWith('    ') && !line.startsWith('      ') && trimmed.endsWith(':')) {
+      subSection = section ? `${section}.${trimmed.slice(0, -1)}` : trimmed.slice(0, -1);
+      continue;
+    }
+
+    if (line.startsWith('    ') && !line.startsWith('      ') && trimmed.includes(':')) {
+      const separatorIndex = trimmed.indexOf(':');
+      const key = trimmed.slice(0, separatorIndex).trim();
+      const value = unquoteYamlValue(trimmed.slice(separatorIndex + 1));
+
+      if (section === 'xml_extension') {
+        if (key === 'context_path') current.contextPath = value;
+        if (key === 'employee_attribute_code') current.employeeAttributeCode = value;
+        if (key === 'employee_attribute_type') current.employeeAttributeType = value;
+        if (key === 'source_field') current.sourceField = value;
+      }
+
+      continue;
+    }
+
+    if (trimmed.startsWith('- ')) {
+      const value = unquoteYamlValue(trimmed.slice(2));
+      if (section === 'api_source') {
+        current.apiSource.push(value);
+      } else if (section === 'user_phrases') {
+        current.userPhrases.push(value);
+      } else if (section === 'validation_rules') {
+        current.validationRules.push(value);
+      } else if (subSection === 'parameters.period') {
+        current.periodModes.push(value);
+      }
+    }
+  }
+
+  pushCurrent();
+  return definitions;
+}
+
+function tokenizeForSearch(input: string): string[] {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2);
+}
+
+function detectStaticKpi(text: string): string {
+  const normalized = text.toLowerCase();
+  if (normalized.includes('jongste')) return 'youngest_active_employees';
+  if (normalized.includes('oudste')) return 'oldest_active_employees';
+  if (normalized.includes('verjaardag') || normalized.includes('jarig')) return 'upcoming_birthdays_4_weeks';
+  if (normalized.includes('contracturen') || normalized.includes('uren per week') || normalized.includes('contract uren')) {
+    return 'average_contract_hours_active_employees';
+  }
+  if (normalized.includes('leeftijd')) return 'average_age_active_employees';
+  return 'unknown';
+}
+
+function parseRequestedListSize(question: string, fallback = 5): number {
+  const match = question.match(/\b(\d{1,2})\b/);
+  if (!match) {
+    return fallback;
+  }
+  const numeric = Number(match[1]);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.max(1, Math.min(numeric, 25));
+}
+
+function scoreKpiDefinition(question: string, definition: YamlKpiDefinition): number {
+  const questionTokens = tokenizeForSearch(question);
+  const haystacks = [
+    definition.metric.replace(/_/g, ' '),
+    definition.category,
+    definition.description,
+    definition.formula,
+    definition.interpretation,
+    definition.sourceField,
+    ...definition.userPhrases
+  ]
+    .join(' ')
+    .toLowerCase();
+
+  let score = 0;
+  for (const token of questionTokens) {
+    if (definition.metric.toLowerCase().includes(token)) score += 6;
+    if (definition.userPhrases.some((phrase) => phrase.toLowerCase().includes(token))) score += 4;
+    if (haystacks.includes(token)) score += 2;
+  }
+
+  const exactPhrase = definition.userPhrases.find((phrase) => question.toLowerCase().includes(phrase.toLowerCase()));
+  if (exactPhrase) {
+    score += 10;
+  }
+
+  return score;
+}
+
+function selectDynamicKpiDefinition(question: string, definitions: YamlKpiDefinition[]): YamlKpiDefinition | null {
+  const ranked = definitions
+    .map((definition) => ({ definition, score: scoreKpiDefinition(question, definition) }))
+    .sort((a, b) => b.score - a.score);
+
+  if (ranked[0] && ranked[0].score > 0) {
+    return ranked[0].definition;
+  }
+
+  const staticFallback = detectStaticKpi(question);
+  return definitions.find((definition) => definition.metric === staticFallback) || null;
+}
+
+function getPathValues(input: any, pathExpression: string): any[] {
+  const normalizedPath = pathExpression
+    .replace(/^HRAnalysisModel[/.]/i, '')
+    .replace(/^Medewerkers[/.]Medewerker[/.]/i, '')
+    .replace(/\//g, '.')
+    .replace(/\.\.+/g, '.')
+    .replace(/^\.+|\.+$/g, '');
+
+  const segments = normalizedPath.split('.').map((segment) => segment.trim()).filter(Boolean);
+  if (segments.length === 0) {
+    return [];
+  }
+
+  const walk = (value: any, index: number): any[] => {
+    if (value === null || value === undefined) {
+      return [];
+    }
+
+    if (index >= segments.length) {
+      return [value];
+    }
+
+    if (Array.isArray(value)) {
+      return value.flatMap((item) => walk(item, index));
+    }
+
+    if (typeof value !== 'object') {
+      return [];
+    }
+
+    const segment = segments[index];
+    const exactKey = Object.keys(value).find((key) => key === segment || key.toLowerCase() === segment.toLowerCase());
+    if (!exactKey) {
+      return [];
+    }
+
+    return walk(value[exactKey], index + 1);
+  };
+
+  return walk(input, 0);
+}
+
+function collectFieldValuesRecursive(input: any, fieldName: string): any[] {
+  if (input === null || input === undefined) {
+    return [];
+  }
+
+  if (Array.isArray(input)) {
+    return input.flatMap((item) => collectFieldValuesRecursive(item, fieldName));
+  }
+
+  if (typeof input !== 'object') {
+    return [];
+  }
+
+  const values: any[] = [];
+  for (const [key, value] of Object.entries(input)) {
+    if (key.toLowerCase() === fieldName.toLowerCase()) {
+      values.push(value);
+    }
+    values.push(...collectFieldValuesRecursive(value, fieldName));
+  }
+  return values;
+}
+
+function coerceMetricNumber(rawValue: any, snapshotDateIso: string, definition: YamlKpiDefinition): number | null {
+  if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+    return rawValue;
+  }
+
+  if (typeof rawValue === 'string') {
+    const numeric = Number(rawValue.replace(',', '.'));
+    if (Number.isFinite(numeric)) {
+      return numeric;
+    }
+
+    const lowerFormula = definition.formula.toLowerCase();
+    const lowerSourceField = definition.sourceField.toLowerCase();
+    const metricName = definition.metric.toLowerCase();
+    const looksLikeAgeMetric = lowerFormula.includes('365.25')
+      || lowerFormula.includes('leeftijd')
+      || metricName.includes('age')
+      || metricName.includes('leeftijd')
+      || lowerSourceField.includes('geboortedatum')
+      || lowerSourceField.includes('birthdate');
+
+    if (looksLikeAgeMetric) {
+      const age = calculateAgeOnDate(rawValue, new Date(snapshotDateIso));
+      return typeof age === 'number' ? age : null;
+    }
+  }
+
+  return null;
+}
+
+function aggregateMetricValues(values: number[], aggregation: string): number | null {
+  if (values.length === 0) {
+    return null;
+  }
+
+  const normalizedAggregation = aggregation.toLowerCase();
+  if (normalizedAggregation === 'sum') {
+    return Number(values.reduce((total, value) => total + value, 0).toFixed(2));
+  }
+  if (normalizedAggregation === 'min') {
+    return Number(Math.min(...values).toFixed(2));
+  }
+  if (normalizedAggregation === 'max') {
+    return Number(Math.max(...values).toFixed(2));
+  }
+  if (normalizedAggregation === 'count') {
+    return values.length;
+  }
+  return Number((values.reduce((total, value) => total + value, 0) / values.length).toFixed(2));
+}
+
+function buildDynamicMetricSummary(definition: YamlKpiDefinition, snapshots: any[], question: string) {
+  const requestedSize = parseRequestedListSize(question);
+  const lowerFormula = definition.formula.toLowerCase();
+  const lowerAggregation = definition.aggregation.toLowerCase();
+  const metricLabel = definition.metric.replace(/_/g, ' ');
+  const isListMetric = lowerFormula.includes('sort_asc')
+    || lowerFormula.includes('sort_desc')
+    || lowerAggregation.includes('list')
+    || definition.metric.includes('youngest')
+    || definition.metric.includes('oldest')
+    || definition.metric.includes('birthdays');
+
+  if (definition.metric === 'average_age_active_employees') {
+    return {
+      kind: 'scalar',
+      snapshots: snapshots.map((snapshot) => ({
+        label: snapshot.label,
+        date: snapshot.date,
+        activeEmployees: snapshot.activeEmployees,
+        value: snapshot.averageAge
+      })),
+      sampleRows: [],
+      noData: snapshots.every((snapshot) => typeof snapshot.averageAge !== 'number')
+    };
+  }
+
+  if (definition.metric === 'average_contract_hours_active_employees') {
+    return {
+      kind: 'scalar',
+      snapshots: snapshots.map((snapshot) => ({
+        label: snapshot.label,
+        date: snapshot.date,
+        activeEmployees: snapshot.activeEmployees,
+        value: snapshot.averageContractHours
+      })),
+      sampleRows: [],
+      noData: snapshots.every((snapshot) => typeof snapshot.averageContractHours !== 'number')
+    };
+  }
+
+  if (definition.metric === 'youngest_active_employees') {
+    return {
+      kind: 'list',
+      snapshots: snapshots.map((snapshot) => ({
+        label: snapshot.label,
+        date: snapshot.date,
+        activeEmployees: snapshot.activeEmployees,
+        rows: (snapshot.youngestEmployees || []).slice(0, requestedSize).map((row: any, index: number) => ({
+          rank: index + 1,
+          medewerker: row.name,
+          waarde: row.age,
+          detail: 'leeftijd'
+        }))
+      })),
+      sampleRows: [],
+      noData: !(snapshots[0]?.youngestEmployees?.length > 0)
+    };
+  }
+
+  if (definition.metric === 'oldest_active_employees') {
+    return {
+      kind: 'list',
+      snapshots: snapshots.map((snapshot) => ({
+        label: snapshot.label,
+        date: snapshot.date,
+        activeEmployees: snapshot.activeEmployees,
+        rows: (snapshot.oldestEmployees || []).slice(0, requestedSize).map((row: any, index: number) => ({
+          rank: index + 1,
+          medewerker: row.name,
+          waarde: row.age,
+          detail: 'leeftijd'
+        }))
+      })),
+      sampleRows: [],
+      noData: !(snapshots[0]?.oldestEmployees?.length > 0)
+    };
+  }
+
+  if (definition.metric === 'upcoming_birthdays_4_weeks') {
+    return {
+      kind: 'list',
+      snapshots: snapshots.map((snapshot) => ({
+        label: snapshot.label,
+        date: snapshot.date,
+        activeEmployees: snapshot.activeEmployees,
+        rows: (snapshot.upcomingBirthdays || []).slice(0, requestedSize).map((row: any, index: number) => ({
+          rank: index + 1,
+          medewerker: row.name,
+          waarde: row.daysUntil,
+          detail: `${row.nextBirthday} | wordt ${row.ageTurning}`
+        }))
+      })),
+      sampleRows: [],
+      noData: !(snapshots[0]?.upcomingBirthdays?.length > 0)
+    };
+  }
+
+  const summarySnapshots = snapshots.map((snapshot) => {
+    const medewerkers = snapshot.hamModel?.Medewerkers?.Medewerker || [];
+    const employeeRows = medewerkers
+      .map((medewerker: any) => {
+        const directValues = definition.sourceField ? getPathValues(medewerker, definition.sourceField) : [];
+        const fallbackValues = directValues.length === 0 && definition.sourceField
+          ? collectFieldValuesRecursive(medewerker, definition.sourceField.split(/[/.]/).filter(Boolean).slice(-1)[0] || definition.sourceField)
+          : [];
+        const values = [...directValues, ...fallbackValues];
+        const numericValues = values
+          .map((value) => coerceMetricNumber(value, snapshot.date, definition))
+          .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+
+        return {
+          medewerker: medewerker?.Identificatie?.VolledigeNaam || 'Onbekende medewerker',
+          values: numericValues
+        };
+      })
+      .filter((row: any) => row.values.length > 0);
+
+    const flatValues = employeeRows.flatMap((row: any) => row.values);
+    const scalarValue = aggregateMetricValues(flatValues, definition.aggregation || 'average');
+    const rows = isListMetric
+      ? employeeRows
+          .map((row: any) => ({
+            medewerker: row.medewerker,
+            waarde: row.values[0]
+          }))
+          .sort((a: any, b: any) => lowerFormula.includes('sort_desc') ? b.waarde - a.waarde : a.waarde - b.waarde)
+          .slice(0, requestedSize)
+          .map((row: any, index: number) => ({
+            rank: index + 1,
+            medewerker: row.medewerker,
+            waarde: row.waarde,
+            detail: metricLabel
+          }))
+      : [];
+
+    return {
+      label: snapshot.label,
+      date: snapshot.date,
+      activeEmployees: snapshot.activeEmployees,
+      value: scalarValue,
+      rows
+    };
+  });
+
+  return {
+    kind: isListMetric ? 'list' : 'scalar',
+    snapshots: summarySnapshots,
+    sampleRows: summarySnapshots[0]?.rows || [],
+    noData: summarySnapshots.every((snapshot) => (isListMetric ? (snapshot.rows || []).length === 0 : typeof snapshot.value !== 'number'))
+  };
+}
+
+function buildKpiBuilderFallbackAnswer(question: string, draft: KpiBuilderDraftPayload, sourceSections: ExactDocSection[]): string {
+  const endpointLines = sourceSections.length > 0
+    ? sourceSections.map((section) => `- ${section.uri} (${section.title})`).join('\n')
+    : '- Geen duidelijke Exact bron gevonden op basis van de huidige zoekvraag.';
+  const firstFields = sourceSections.flatMap((section) => section.properties).slice(0, 8);
+  const fieldLine = firstFields.length > 0 ? firstFields.join(', ') : 'Geen bronvelden gevonden';
+  const periodModes = Array.isArray(draft.periodModes) && draft.periodModes.length > 0 ? draft.periodModes.join(', ') : 'nu';
+
+  return [
+    `KPI Wizard Advies - ${draft.name || 'Nieuwe KPI'}`,
+    '',
+    '1. Aanpak',
+    `Gebruik de managementvraag "${draft.businessQuestion || question}" als startpunt en koppel daar een duidelijke metric code, formule en peildatumlogica aan.`,
+    '',
+    '2. Exact endpoints',
+    endpointLines,
+    '',
+    '3. XML definitie',
+    `Plaats KPI metadata onder HRAnalysisModel/KPIExtensies/KPI en medewerker-specifieke waarden onder HRAnalysisModel/Medewerkers/Medewerker/KPIAttributen.`,
+    '',
+    '4. YAML definitie',
+    `Gebruik metric code "${draft.code || 'nieuwe_metric'}", periodes "${periodModes}" en zorg dat formule, api_source en validatie exact aansluiten op de gekozen endpoints.`,
+    '',
+    '5. Belangrijkste velden',
+    fieldLine,
+    '',
+    '6. Risico',
+    'Controleer dat elk gekozen veld echt voorkomt in de Exact properties en geef "No data available" als de bron geen records teruggeeft.'
+  ].join('\n');
+}
+
 // --- Routes ---
 
 // 0. App Login Route
@@ -394,6 +1275,346 @@ app.get('/api/kpi-agent/health', (req, res) => {
     hasApiKey,
     model
   });
+});
+
+app.get('/api/kpi-agent/status', checkAppAuth, (req, res) => {
+  const configuredPin = getConfiguredKpiAgentPin();
+  return res.json({
+    pinConfigured: Boolean(configuredPin),
+    unlocked: Boolean(req.session.isKpiAgentAuthorized),
+    temporarilyLocked: isKpiAgentTemporarilyLocked(req),
+    remainingAttempts: getRemainingKpiAgentAttempts(req),
+    lockedUntil: typeof req.session.kpiAgentLockedUntil === 'number' ? req.session.kpiAgentLockedUntil : null
+  });
+});
+
+app.post('/api/kpi-agent/unlock', checkAppAuth, (req, res) => {
+  const configuredPin = getConfiguredKpiAgentPin();
+  if (!configuredPin) {
+    return res.status(503).json({ success: false, error: 'Error: PINCODE ontbreekt of is ongeldig in de serverconfiguratie.' });
+  }
+
+  if (isKpiAgentTemporarilyLocked(req)) {
+    const lockedUntil = req.session.kpiAgentLockedUntil || Date.now();
+    return res.status(429).json({
+      success: false,
+      error: 'Error: HR & Payroll KPI Agent is tijdelijk geblokkeerd. Probeer het later opnieuw.',
+      remainingAttempts: 0,
+      lockedUntil
+    });
+  }
+
+  const pin = String(req.body?.pin || '').trim();
+  if (!/^\d{4}$/.test(pin)) {
+    return res.status(400).json({ success: false, error: 'Error: Pincode moet uit 4 cijfers bestaan.' });
+  }
+
+  if (!securePinMatches(pin, configuredPin)) {
+    const failedAttempts = (req.session.kpiAgentFailedAttempts || 0) + 1;
+    req.session.kpiAgentFailedAttempts = failedAttempts;
+
+    if (failedAttempts >= KPI_AGENT_MAX_FAILED_ATTEMPTS) {
+      req.session.kpiAgentLockedUntil = Date.now() + KPI_AGENT_LOCK_MS;
+      req.session.isKpiAgentAuthorized = false;
+    }
+
+    return req.session.save((saveError) => {
+      if (saveError) {
+        return res.status(500).json({ success: false, error: 'Error: Sessie opslaan mislukt.' });
+      }
+
+      const locked = isKpiAgentTemporarilyLocked(req);
+      return res.status(locked ? 429 : 401).json({
+        success: false,
+        error: locked ? 'Error: HR & Payroll KPI Agent is tijdelijk geblokkeerd. Probeer het later opnieuw.' : 'Error: Ongeldige pincode.',
+        remainingAttempts: locked ? 0 : getRemainingKpiAgentAttempts(req),
+        lockedUntil: typeof req.session.kpiAgentLockedUntil === 'number' ? req.session.kpiAgentLockedUntil : null
+      });
+    });
+  }
+
+  req.session.isKpiAgentAuthorized = true;
+  req.session.kpiAgentFailedAttempts = 0;
+  delete req.session.kpiAgentLockedUntil;
+
+  return req.session.save((saveError) => {
+    if (saveError) {
+      return res.status(500).json({ success: false, error: 'Error: Sessie opslaan mislukt.' });
+    }
+    return res.json({ success: true, unlocked: true });
+  });
+});
+
+app.post('/api/kpi-agent/lock', checkAppAuth, (req, res) => {
+  req.session.isKpiAgentAuthorized = false;
+  req.session.save((saveError) => {
+    if (saveError) {
+      return res.status(500).json({ success: false, error: 'Error: Sessie opslaan mislukt.' });
+    }
+    return res.json({ success: true, unlocked: false });
+  });
+});
+
+app.get('/api/kpi-builder/status', checkAppAuth, async (req, res) => {
+  const hasAiKey = Boolean(process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY);
+  try {
+    const docsStats = await stat(EXACT_DOCS_PATH);
+    return res.json({
+      unlocked: Boolean(req.session.isKpiAgentAuthorized),
+      exactDocsAvailable: true,
+      exactDocsUpdatedAt: docsStats.mtime.toISOString(),
+      aiReady: hasAiKey
+    });
+  } catch {
+    return res.json({
+      unlocked: Boolean(req.session.isKpiAgentAuthorized),
+      exactDocsAvailable: false,
+      exactDocsUpdatedAt: null,
+      aiReady: hasAiKey
+    });
+  }
+});
+
+app.get('/api/kpi-builder/context', checkAppAuth, requireKpiAgentAuth, async (_req, res) => {
+  try {
+    const assets = await loadBuilderAssets();
+    const docSections = parseExactDocumentationSections(assets.exactDocsContent);
+    const metrics = parseExistingMetricCodes(assets.yamlContent);
+    const endpointCatalog = docSections
+      .map((section) => ({
+        title: section.title,
+        uri: section.uri,
+        scope: section.scope,
+        summary: section.summary,
+        properties: section.properties.slice(0, 12)
+      }))
+      .sort((a, b) => a.title.localeCompare(b.title, 'en'))
+      .slice(0, 200);
+
+    return res.json({
+      metrics,
+      existingMetrics: metrics,
+      endpointCatalog,
+      hamXml: assets.hamContent,
+      yamlJson: assets.yamlContent,
+      techSpecs: assets.techSpecsContent,
+      exactDocsUpdatedAt: assets.exactDocsUpdatedAt
+    });
+  } catch (error) {
+    console.error('Error loading KPI builder context:', error);
+    return res.status(500).json({ error: 'Error: KPI wizard context kon niet worden geladen.' });
+  }
+});
+
+app.get('/api/kpi-builder/docs-search', checkAppAuth, requireKpiAgentAuth, async (req, res) => {
+  const query = String(req.query.q || '').trim().slice(0, 200);
+  if (!query) {
+    return res.status(400).json({ error: 'Error: Zoekterm ontbreekt.' });
+  }
+
+  try {
+    const exactDocsContent = await readFile(EXACT_DOCS_PATH, 'utf-8');
+    const docSections = parseExactDocumentationSections(exactDocsContent);
+    const results = searchExactDocumentation(docSections, query, 10).map((section) => ({
+      title: section.title,
+      uri: section.uri,
+      scope: section.scope,
+      summary: section.summary,
+      properties: section.properties.slice(0, 12)
+    }));
+
+    return res.json({ query, results });
+  } catch (error) {
+    console.error('Error searching Exact docs:', error);
+    return res.status(500).json({ error: 'Error: Exact documentatie kon niet worden doorzocht.' });
+  }
+});
+
+app.post('/api/kpi-builder/docs-search', checkAppAuth, requireKpiAgentAuth, async (req, res) => {
+  const query = String(req.body?.query || '').trim().slice(0, 200);
+  if (!query) {
+    return res.status(400).json({ error: 'Error: Zoekterm ontbreekt.' });
+  }
+
+  try {
+    const exactDocsContent = await readFile(EXACT_DOCS_PATH, 'utf-8');
+    const docSections = parseExactDocumentationSections(exactDocsContent);
+    const results = searchExactDocumentation(docSections, query, 10).map((section) => ({
+      title: section.title,
+      uri: section.uri,
+      scope: section.scope,
+      summary: section.summary,
+      properties: section.properties.slice(0, 12)
+    }));
+
+    return res.json({ query, results });
+  } catch (error) {
+    console.error('Error searching Exact docs:', error);
+    return res.status(500).json({ error: 'Error: Exact documentatie kon niet worden doorzocht.' });
+  }
+});
+
+app.post('/api/kpi-builder/assist', checkAppAuth, requireKpiAgentAuth, async (req, res) => {
+  const question = String(req.body?.question || '').trim().slice(0, 2000);
+  const draft = (req.body?.draft || {}) as KpiBuilderDraftPayload;
+
+  if (!question) {
+    return res.status(400).json({ error: 'Error: Vraag ontbreekt.' });
+  }
+
+  try {
+    const assets = await loadBuilderAssets();
+    const googleApiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+    const geminiModel = (process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
+    const docSections = parseExactDocumentationSections(assets.exactDocsContent);
+    const searchQuery = [
+      question,
+      draft.name,
+      draft.code,
+      draft.description,
+      draft.businessQuestion,
+      draft.formula,
+      draft.employeeAttributeSourceField,
+      ...(Array.isArray(draft.selectedEndpoints) ? draft.selectedEndpoints : [])
+    ].filter(Boolean).join(' ');
+    const relevantSections = searchExactDocumentation(docSections, searchQuery, 6);
+
+    if (!googleApiKey) {
+      return res.json({
+        answer: buildKpiBuilderFallbackAnswer(question, draft, relevantSections),
+        aiReady: false,
+        sourceSections: relevantSections.map((section) => ({
+          title: section.title,
+          uri: section.uri,
+          scope: section.scope,
+          summary: section.summary,
+          properties: section.properties.slice(0, 10)
+        }))
+      });
+    }
+
+    const existingMetrics = parseExistingMetricCodes(assets.yamlContent).slice(0, 120).join(', ');
+    const relevantDocsBlock = relevantSections.map((section) => [
+      `Titel: ${section.title}`,
+      `URI: ${section.uri}`,
+      `Scope: ${section.scope}`,
+      `Properties: ${section.properties.slice(0, 14).join(', ') || 'n/a'}`,
+      `Samenvatting: ${section.summary}`
+    ].join('\n')).join('\n\n');
+
+    const prompt = `
+Je helpt een KPI wizard voor een HR & Payroll applicatie.
+Antwoord in zakelijk Nederlands en maak geen data of endpointnamen op.
+
+Managementvraag:
+${question}
+
+Huidige KPI draft:
+${JSON.stringify(draft, null, 2)}
+
+Bestaande metrics:
+${existingMetrics}
+
+HAM XML context:
+${assets.hamContent.slice(0, 8000)}
+
+YAML context:
+${assets.yamlContent.slice(0, 8000)}
+
+Tech specs context:
+${assets.techSpecsContent.slice(0, 8000)}
+
+Relevante Exact documentatie:
+${relevantDocsBlock || 'Geen matches gevonden.'}
+
+Geef exact deze structuur:
+1. Aanbevolen aanpak
+2. Geschikte Exact endpoints
+3. XML definitie voorstel
+4. YAML definitie voorstel
+5. Validatie en risico's
+
+Noem alleen endpointnamen die in de documentatie voorkomen. Als er iets ontbreekt, zeg dat expliciet.
+`;
+
+    const geminiResponse = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${googleApiKey}`,
+      {
+        contents: [{ role: 'user', parts: [{ text: sanitizeModelText(prompt) }] }],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 1200
+        }
+      },
+      {
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
+
+    const answer = geminiResponse.data?.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || '').join('\n').trim();
+    return res.json({
+      answer: answer || buildKpiBuilderFallbackAnswer(question, draft, relevantSections),
+      aiReady: true,
+      sourceSections: relevantSections.map((section) => ({
+        title: section.title,
+        uri: section.uri,
+        scope: section.scope,
+        summary: section.summary,
+        properties: section.properties.slice(0, 10)
+      }))
+    });
+  } catch (error) {
+    console.error('Error assisting KPI builder:', error);
+    return res.status(500).json({ error: 'Error: KPI wizard assistent kon geen antwoord genereren.' });
+  }
+});
+
+app.post('/api/kpi-builder/confirm', checkAppAuth, requireKpiAgentAuth, async (req, res) => {
+  try {
+    const normalizedDraft = normalizeBuilderDraft((req.body?.draft || {}) as KpiBuilderDraftPayload);
+    const validationErrors = validateKpiBuilderDraft(normalizedDraft);
+
+    if (validationErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: validationErrors[0],
+        validationErrors
+      });
+    }
+
+    const [yamlContent, techSpecsContent] = await Promise.all([
+      readFile(YAML_PATH, 'utf-8'),
+      readFile(TECH_SPECS_PATH, 'utf-8')
+    ]);
+
+    const existingMetrics = parseExistingMetricCodes(yamlContent);
+    if (existingMetrics.includes(normalizedDraft.code)) {
+      return res.status(409).json({
+        success: false,
+        error: `Error: Metric code "${normalizedDraft.code}" bestaat al in yaml.json.`
+      });
+    }
+
+    const yamlSnippet = buildKpiYamlSnippet(normalizedDraft);
+    const techSpecsSnippet = buildKpiTechSpecsSnippet(normalizedDraft);
+    const nextYamlContent = `${yamlContent.trimEnd()}\n${yamlSnippet}\n`;
+    const nextTechSpecsContent = `${techSpecsContent.trimEnd()}\n\n${techSpecsSnippet}\n`;
+
+    await Promise.all([
+      writeFile(YAML_PATH, nextYamlContent, 'utf-8'),
+      writeFile(TECH_SPECS_PATH, nextTechSpecsContent, 'utf-8')
+    ]);
+
+    return res.json({
+      success: true,
+      metric: normalizedDraft.code,
+      filesUpdated: ['public/yaml.json', 'public/Tech specs.md'],
+      existingMetrics: [...existingMetrics, normalizedDraft.code].sort((a, b) => a.localeCompare(b, 'en'))
+    });
+  } catch (error) {
+    console.error('Error saving KPI builder definition:', error);
+    return res.status(500).json({ success: false, error: 'Error: KPI definitie kon niet worden opgeslagen.' });
+  }
 });
 
 // 4. Get All Divisions
@@ -618,7 +1839,7 @@ app.get('/api/employees', checkAppAuth, async (req, res) => {
   }
 });
 
-app.post('/api/kpi-agent/query', checkAppAuth, async (req, res) => {
+app.post('/api/kpi-agent/query', checkAppAuth, requireKpiAgentAuth, async (req, res) => {
   const accessToken = await getValidToken(req);
   if (!accessToken) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -654,12 +1875,14 @@ app.post('/api/kpi-agent/query', checkAppAuth, async (req, res) => {
     return res.status(400).json({ error: 'Error: Er is geen vraag meegegeven.' });
   }
   const answerLength: AnswerLength = req.body?.answerLength === 'kort' ? 'kort' : 'lang';
+  const queryMode: AgentQueryMode = req.body?.mode === 'dynamic' ? 'dynamic' : 'static';
 
   const period: AgentPeriod = req.body?.period === 'trend' || req.body?.period === 'vorig_jaar' ? req.body.period : 'nu';
   const nowDate = new Date();
   const snapshots = getSnapshotDates(period, nowDate);
   const apiCalls: AgentApiCall[] = [];
   apiCalls.push({ endpoint: 'Stap: Start validatie', status: 'success', records: 1, message: 'Input is gevalideerd.' });
+  apiCalls.push({ endpoint: 'Stap: Analysemodus', status: 'info', records: 1, message: queryMode === 'dynamic' ? 'Dynamische YAML-gestuurde modus actief.' : 'Bestaande statische modus actief.' });
 
   const fetchExact = async (endpoint: string, select?: string): Promise<any[]> => {
     const query = select ? `?$select=${select}&$top=1000` : '?$top=1000';
@@ -911,25 +2134,7 @@ app.post('/api/kpi-agent/query', checkAppAuth, async (req, res) => {
     ]);
     apiCalls.push({ endpoint: 'Stap: Instructiebronnen laden', status: 'success', records: 3, message: 'YAML, HAM en Tech Specs geladen.' });
 
-    const trendComparisonAvailable = snapshotResults.length > 1;
-    const baseSnapshot = snapshotResults.find((snapshot) => snapshot.label === 'T-0') || snapshotResults[0];
-    const answerStyleInstruction = answerLength === 'kort'
-      ? 'Geef een compact en zakelijk antwoord. Maximaal 4 korte alinea’s totaal, zonder uitweidingen. Houd elke sectie op 1 zin, behalve de tabel.'
-      : 'Geef een uitgebreid antwoord met duidelijke context en onderbouwing binnen het verplichte format. Minimaal 4 secties (1 t/m 4) en altijd minimaal 1 tabel.';
-
-    const detectKpi = (text: string): string => {
-      const normalized = text.toLowerCase();
-      if (normalized.includes('jongste')) return 'youngest_active_employees';
-      if (normalized.includes('oudste')) return 'oldest_active_employees';
-      if (normalized.includes('verjaardag') || normalized.includes('jarig')) return 'upcoming_birthdays_4_weeks';
-      if (normalized.includes('contracturen') || normalized.includes('uren per week') || normalized.includes('contract uren')) {
-        return 'average_contract_hours_active_employees';
-      }
-      if (normalized.includes('leeftijd')) return 'average_age_active_employees';
-      return 'unknown';
-    };
-
-    const selectedKpi = detectKpi(question);
+    const yamlDefinitions = parseYamlKpiDefinitions(yamlContent);
     const kpiLabelMap: Record<string, string> = {
       average_age_active_employees: 'Gemiddelde Leeftijd Actieve Medewerkers',
       average_contract_hours_active_employees: 'Gemiddelde Contracturen Actieve Medewerkers',
@@ -938,6 +2143,147 @@ app.post('/api/kpi-agent/query', checkAppAuth, async (req, res) => {
       upcoming_birthdays_4_weeks: 'Komende Verjaardagen (4 weken)',
       unknown: 'HR KPI Rapport'
     };
+
+    if (queryMode === 'dynamic') {
+      const selectedDefinition = selectDynamicKpiDefinition(question, yamlDefinitions);
+      if (!selectedDefinition) {
+        return res.json({
+          answer: 'Geen data beschikbaar.',
+          kpi: 'unavailable',
+          mode: queryMode,
+          period,
+          snapshots: snapshotResults.map((snapshot) => ({
+            label: snapshot.label,
+            date: snapshot.date,
+            activeEmployees: snapshot.activeEmployees
+          })),
+          apiCalls: [...apiCalls, { endpoint: 'Stap: KPI-selectie', status: 'error', records: 0, message: 'Geen passende KPI-definitie gevonden in yaml.json.' }],
+          noData: true
+        });
+      }
+
+      apiCalls.push({ endpoint: 'Stap: KPI-selectie', status: 'success', records: 1, message: `Dynamische KPI match: ${selectedDefinition.metric}` });
+      const dynamicSummary = buildDynamicMetricSummary(selectedDefinition, snapshotResults, question);
+      if (dynamicSummary.noData) {
+        return res.json({
+          answer: 'Geen data beschikbaar.',
+          kpi: selectedDefinition.metric,
+          mode: queryMode,
+          period,
+          snapshots: dynamicSummary.snapshots,
+          apiCalls: [...apiCalls, { endpoint: 'Stap: Dynamische berekening', status: 'error', records: 0, message: 'Voor deze KPI is geen bruikbare dataset gevonden in de huidige snapshots.' }],
+          noData: true
+        });
+      }
+
+      const baseDynamicSnapshot = dynamicSummary.snapshots.find((snapshot: any) => snapshot.label === 'T-0') || dynamicSummary.snapshots[0];
+      const dynamicFormatInstruction = dynamicSummary.kind === 'list'
+        ? `
+OUTPUT FORMAT (VERPLICHT)
+- Gebruik geen markdown-koppen met # of ###.
+- Gebruik exact deze sectiekoppen en volgorde: 1. Executive Summary, 2. Kerncijfers & Trend, 3. Analyse & Context, 4. Strategisch Advies.
+- Start altijd met: "${kpiLabelMap[selectedDefinition.metric] || selectedDefinition.metric} - ${baseDynamicSnapshot?.date || 'onbekende peildatum'}" op de eerste regel.
+- Sectie 2 bevat altijd minimaal 1 markdown-tabel met deze kolommen: | Rang | Medewerker | Waarde | Detail |
+- Gebruik uitsluitend de waarden uit DYNAMIC_METRIC_SUMMARY.
+- ${answerLength === 'kort' ? 'Houd het antwoord compact in maximaal 4 korte alinea’s.' : 'Geef extra context en risico-inschatting, maar blijf binnen de beschikbare data.'}
+`
+        : `
+OUTPUT FORMAT (VERPLICHT)
+- Gebruik geen markdown-koppen met # of ###.
+- Gebruik exact deze sectiekoppen en volgorde: 1. Executive Summary, 2. Kerncijfers & Trend, 3. Analyse & Context, 4. Strategisch Advies.
+- Start altijd met: "${kpiLabelMap[selectedDefinition.metric] || selectedDefinition.metric} - ${baseDynamicSnapshot?.date || 'onbekende peildatum'}" op de eerste regel.
+- Sectie 2 bevat altijd minimaal 1 markdown-tabel met deze kolommen: | Peildatum | Actieve medewerkers (n) | Waarde | Eenheid |
+- Gebruik uitsluitend de waarden uit DYNAMIC_METRIC_SUMMARY.
+- ${answerLength === 'kort' ? 'Houd het antwoord compact in maximaal 4 korte alinea’s.' : 'Geef extra context en risico-inschatting, maar blijf binnen de beschikbare data.'}
+`;
+
+      const dynamicPrompt = `
+ROL
+Je bent de "Exact Online HR & Payroll Intelligence Agent".
+
+ANALYSEMODUS
+- Gebruik de dynamische KPI-methode.
+- De KPI-definitie komt uit yaml.json.
+- Behoud zakelijke taal en verzin geen data.
+
+SYSTEEMINSTRUCTIE_PERSONA
+${STRATEGIC_HR_AGENT_INSTRUCTION}
+
+GEBRUIKERSVRAAG
+${question}
+
+GESELECTEERDE PERIODE
+${period}
+
+GESELECTEERDE KPI DEFINITIE
+${JSON.stringify(selectedDefinition, null, 2)}
+
+DYNAMIC_METRIC_SUMMARY
+${JSON.stringify(dynamicSummary.snapshots, null, 2)}
+
+YAML
+${yamlContent}
+
+HAM_XSD
+${hamContent}
+
+TECH_SPECS
+${techSpecsContent}
+
+HAM_SNAPSHOTS_JSON
+${JSON.stringify(snapshotResults.map((snapshot) => ({
+  label: snapshot.label,
+  model: snapshot.hamModel
+})))}
+
+${dynamicFormatInstruction}
+`;
+
+      apiCalls.push({ endpoint: 'Stap: AI-analyse', status: 'info', records: 1, message: `Gemini model ${geminiModel} verwerkt de dynamische prompt.` });
+      const dynamicResponse = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${googleApiKey}`,
+        {
+          contents: [{ role: 'user', parts: [{ text: sanitizeModelText(dynamicPrompt) }] }],
+          generationConfig: {
+            temperature: answerLength === 'kort' ? 0.1 : 0.2,
+            maxOutputTokens: answerLength === 'kort' ? 360 : 2500
+          }
+        },
+        {
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+
+      const dynamicAnswer = dynamicResponse.data?.candidates?.[0]?.content?.parts?.map((part: any) => part.text).join('\n').trim();
+      if (!dynamicAnswer) {
+        return res.json({
+          answer: 'Geen data beschikbaar.',
+          kpi: selectedDefinition.metric,
+          mode: queryMode,
+          period,
+          snapshots: dynamicSummary.snapshots,
+          apiCalls: [...apiCalls, { endpoint: 'Stap: AI-resultaat', status: 'error', records: 0, message: 'AI gaf geen bruikbaar antwoord terug.' }],
+          noData: true
+        });
+      }
+
+      apiCalls.push({ endpoint: 'Stap: Rapport gereed', status: 'success', records: 1, message: 'Dynamisch rapport succesvol samengesteld.' });
+      return res.json({
+        answer: dynamicAnswer,
+        kpi: selectedDefinition.metric,
+        mode: queryMode,
+        period,
+        snapshots: dynamicSummary.snapshots,
+        apiCalls
+      });
+    }
+
+    const trendComparisonAvailable = snapshotResults.length > 1;
+    const baseSnapshot = snapshotResults.find((snapshot) => snapshot.label === 'T-0') || snapshotResults[0];
+    const answerStyleInstruction = answerLength === 'kort'
+      ? 'Geef een compact en zakelijk antwoord. Maximaal 4 korte alinea’s totaal, zonder uitweidingen. Houd elke sectie op 1 zin, behalve de tabel.'
+      : 'Geef een uitgebreid antwoord met duidelijke context en onderbouwing binnen het verplichte format. Minimaal 4 secties (1 t/m 4) en altijd minimaal 1 tabel.';
+    const selectedKpi = detectStaticKpi(question);
 
     const snapshotSummary = snapshotResults.map((snapshot) => ({
       label: snapshot.label,
@@ -1103,6 +2449,7 @@ ${outputFormatInstruction}
       return res.json({
         answer: 'Geen data beschikbaar.',
         kpi: 'unavailable',
+        mode: queryMode,
         period,
         snapshots: snapshotResults.map((snapshot) => ({
           label: snapshot.label,
@@ -1118,6 +2465,7 @@ ${outputFormatInstruction}
     return res.json({
       answer,
       kpi: 'average_age_active_employees,average_contract_hours_active_employees',
+      mode: queryMode,
       period,
       snapshots: snapshotResults.map((snapshot) => ({
         label: snapshot.label,
@@ -1136,6 +2484,7 @@ ${outputFormatInstruction}
     return res.json({
       answer: 'Geen data beschikbaar.',
       kpi: 'unavailable',
+      mode: queryMode,
       period,
       snapshots: [],
       apiCalls: [...apiCalls, { endpoint: 'Stap: KPI-agent fout', status: 'error', records: 0, message: error?.message || 'Onbekende fout.' }],

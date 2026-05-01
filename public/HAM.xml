@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
+
+  <!-- Root Element -->
+  <xs:element name="HRAnalysisModel">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="Header" type="HeaderType"/>
+        <xs:element name="Medewerkers" type="MedewerkersLijstType"/>
+        <xs:element name="KPIExtensies" type="KPIExtensiesType" minOccurs="0"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+  <!-- Header: Context voor de AI -->
+  <xs:complexType name="HeaderType">
+    <xs:sequence>
+      <xs:element name="AdministratieNaam" type="xs:string"/>
+      <xs:element name="Peildatum" type="xs:date"/>
+      <xs:element name="Versie" type="xs:string" fixed="2.0-HR-FOCUS"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- Lijst van medewerkers -->
+  <xs:complexType name="MedewerkersLijstType">
+    <xs:sequence>
+      <xs:element name="Medewerker" type="MedewerkerType" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- Medewerker: Stamgegevens -->
+  <xs:complexType name="MedewerkerType">
+    <xs:sequence>
+      <xs:element name="Identificatie">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="HID" type="xs:int" minOccurs="1">
+              <xs:annotation><xs:documentation>Uniek numeriek ID van de medewerker uit Exact Online.</xs:documentation></xs:annotation>
+            </xs:element>
+            <xs:element name="VolledigeNaam" type="xs:string"/>
+            <xs:element name="Geboortedatum" type="xs:date"/>
+            <xs:element name="Geslacht" type="xs:int">
+              <xs:annotation><xs:documentation>1=Man, 2=Vrouw, 0=Onbekend</xs:documentation></xs:annotation>
+            </xs:element>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+
+      <!-- Organisatie: Waar werkt de persoon? -->
+      <xs:element name="Organisatie">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="Afdeling" type="xs:string"/>
+            <xs:element name="Functie" type="xs:string"/>
+            <xs:element name="Functiegroep" type="xs:string" minOccurs="0"/>
+            <xs:element name="Kostenplaats" type="xs:string" minOccurs="0"/>
+            <xs:element name="ManagerHID" type="xs:int" minOccurs="0"/>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+
+      <!-- Dienstverbanden: Historie en Contracten -->
+      <xs:element name="Dienstverbanden">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="Dienstverband" type="DienstverbandType" maxOccurs="unbounded"/>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+
+      <!-- Operationeel: Verzuim en Verlof -->
+      <xs:element name="Operationeel" type="OperationeelType"/>
+      <xs:element name="KPIAttributen" type="KPIAttributenType" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- Dienstverband Detail -->
+  <xs:complexType name="DienstverbandType">
+    <xs:sequence>
+      <xs:element name="Startdatum" type="xs:date"/>
+      <xs:element name="Einddatum" type="xs:date" nillable="true"/>
+      <xs:element name="ContractType" type="xs:string">
+        <xs:annotation><xs:documentation>Bijv: Bepaald, Onbepaald, Extern</xs:documentation></xs:annotation>
+      </xs:element>
+      <xs:element name="FsIndFZ" type="xs:int" minOccurs="0">
+        <xs:annotation><xs:documentation>Flex-fase indicatie (1 t/m 6, 17 t/m 43)</xs:documentation></xs:annotation>
+      </xs:element>
+      <xs:element name="RedenUitdienst" type="xs:string" nillable="true"/>
+      <xs:element name="IsHerintreder" type="xs:boolean" default="false"/>
+      
+      <!-- Financiële Capaciteit (Zonder belastingen) -->
+      <xs:element name="Capaciteit">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="FTEFactor" type="xs:decimal"/>
+            <xs:element name="ContractUrenPerWeek" type="xs:decimal"/>
+            <xs:element name="BrutoSalarisFulltime" type="xs:decimal"/>
+            <xs:element name="Uurloon" type="xs:decimal"/>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- Operationeel Detail -->
+  <xs:complexType name="OperationeelType">
+    <xs:sequence>
+      <xs:element name="VerloondeUren" type="xs:decimal">
+        <xs:annotation><xs:documentation>Totaal uren waarover salaris is betaald in de periode.</xs:documentation></xs:annotation>
+      </xs:element>
+      <xs:element name="ZiekteUren" type="xs:decimal" default="0"/>
+      <xs:element name="ZiektePercentage" type="xs:decimal" default="0"/>
+      <xs:element name="VerlofUren" type="xs:decimal" default="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- KPI uitbreiding: definities voor nieuwe metrics zonder breuk in het basismodel -->
+  <xs:complexType name="KPIExtensiesType">
+    <xs:sequence>
+      <xs:element name="KPI" type="KPIDefinitieType" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="KPIDefinitieType">
+    <xs:sequence>
+      <xs:element name="Code" type="xs:string"/>
+      <xs:element name="Naam" type="xs:string"/>
+      <xs:element name="Categorie" type="xs:string"/>
+      <xs:element name="Beschrijving" type="xs:string"/>
+      <xs:element name="Bronnen" type="KPIBronnenType"/>
+      <xs:element name="Parameters" type="KPIParametersType" minOccurs="0"/>
+      <xs:element name="Formule" type="xs:string"/>
+      <xs:element name="ContextPad" type="xs:string" minOccurs="0"/>
+      <xs:element name="MedewerkerPad" type="xs:string" minOccurs="0"/>
+      <xs:element name="Aggregatie" type="xs:string" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="KPIBronnenType">
+    <xs:sequence>
+      <xs:element name="Bron" type="KPIBronType" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="KPIBronType">
+    <xs:sequence>
+      <xs:element name="Endpoint" type="xs:string"/>
+      <xs:element name="Veld" type="xs:string" minOccurs="0"/>
+      <xs:element name="Toelichting" type="xs:string" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="KPIParametersType">
+    <xs:sequence>
+      <xs:element name="Parameter" type="KPIParameterType" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="KPIParameterType">
+    <xs:sequence>
+      <xs:element name="Naam" type="xs:string"/>
+      <xs:element name="Waarde" type="xs:string"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="KPIAttributenType">
+    <xs:sequence>
+      <xs:element name="Attribuut" type="KPIAttribuutType" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="KPIAttribuutType">
+    <xs:sequence>
+      <xs:element name="Code" type="xs:string"/>
+      <xs:element name="Label" type="xs:string"/>
+      <xs:element name="Datatype" type="xs:string"/>
+      <xs:element name="Waarde" type="xs:string" minOccurs="0"/>
+      <xs:element name="BronEndpoint" type="xs:string" minOccurs="0"/>
+      <xs:element name="BronVeld" type="xs:string" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+</xs:schema>
